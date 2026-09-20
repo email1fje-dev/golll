@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "main": "src/index.js",
-  "scripts": { "start": "node src/index.js" },
+  "scripts": { "start": "node -r ./src/voice-loader.js src/index.js" },
   "engines": { "node": ">=20" },
   "dependencies": {
     "discord.js": "^14.22.1",

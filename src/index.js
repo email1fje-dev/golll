@@ -406,11 +406,18 @@ client.on('interactionCreate',async i=>{
         }
 
         const logText=`📋 Application #${id} → **${requested}**\\nReviewer: ${i.user}\\nApplicant: <@${app.user_id}>`;
-        if(i.channel?.isTextBased()) await i.channel.send({content:logText}).catch(()=>{});
+        const statusEmoji={INTERVIEW:'🎤',ACCEPTED:'✅',DENIED:'❌',ARCHIVED:'📦'}[requested];
+        const updatedEmbed=i.message?.embeds?.[0]
+          ? EmbedBuilder.from(i.message.embeds[0]).setTitle(`📝 Staff Application #${id} — ${statusEmoji} ${requested}`)
+          : null;
+        if(requested==='ARCHIVED'){
+          if(i.channel?.isTextBased()) await i.channel.send({content:logText}).catch(()=>{});
+        }
         await client.users.fetch(app.user_id).then(u=>u.send(`📋 Your staff application #${id} is now **${requested}**.`).catch(()=>{})).catch(()=>{});
 
         return i.update({
           content:logText,
+          embeds:updatedEmbed?[updatedEmbed]:[],
           components:[]
         });
       }

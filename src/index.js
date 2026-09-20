@@ -99,6 +99,15 @@ async function sendStaffPanel(guild, force=false) {
   await ch.send({embeds:[new EmbedBuilder().setTitle('👮 Staff Control Panel').setDescription("Use the buttons below — no slash commands needed.\n\n🟢 I'M ACTIVE — mark yourself active\n🏖️ Request LOA — submit a leave request\n📋 My Application — check application status").setColor(0x5865F2)],components:rows});
 }
 
+
+async function sendApplicationPanel(guild, force=false) {
+  const ch=guild.channels.cache.find(c=>c.name==='📝・apply-for-staff'&&c.type===ChannelType.GuildText); if(!ch) return;
+  const exists=(await ch.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='📝 Staff Applications');
+  if(exists&&!force) return;
+  const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('goll_apply').setLabel('📝 Apply for Staff').setStyle(ButtonStyle.Primary));
+  await ch.send({embeds:[new EmbedBuilder().setTitle('📝 Staff Applications').setDescription('Want to join the staff team? Click the button below and complete the application.').setColor(0x5865F2)],components:[row]});
+}
+
 async function setupGuild(guild, repair=false) {
   const roles={}; for(const [n] of MANAGED_ROLES) roles[n]=(await role(guild,n)).id;
   const channels={};
@@ -119,7 +128,7 @@ async function setupGuild(guild, repair=false) {
     const exists=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
     if(!exists) await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
   }
-  await sendStaffPanel(guild, repair);\n  await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
+  await sendStaffPanel(guild, repair);\n  await sendApplicationPanel(guild, repair);\n  await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }
 

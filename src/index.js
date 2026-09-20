@@ -4,6 +4,7 @@ const {
   ModalBuilder, TextInputBuilder, TextInputStyle, SlashCommandBuilder
 } = require('discord.js');
 const { Pool } = require('pg');
+const { setupNitro } = require('./nitro');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -40,6 +41,8 @@ const CATEGORIES = {
 };
 
 async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.query(sql, params); }
+
+const nitro = setupNitro(q, client);
 
 async function dbInit() {
   if (!pool) return;
@@ -84,6 +87,7 @@ async function dbInit() {
   await q(`CREATE TABLE IF NOT EXISTS temp_voice(
     channel_id TEXT PRIMARY KEY, guild_id TEXT, owner_id TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  await nitro.dbInit();
   await q(`CREATE TABLE IF NOT EXISTS economy(
     guild_id TEXT, user_id TEXT, balance BIGINT NOT NULL DEFAULT 0,
     xp INT NOT NULL DEFAULT 0, level INT NOT NULL DEFAULT 0,
@@ -178,6 +182,7 @@ async function setupGuild(guild, repair=false) {
   await sendApplicationPanel(guild, repair);
   await sendActivityPanel(guild, repair);
   await sendGiveawayPanel(guild, repair);
+  await nitro.ensurePanel(guild, repair);
   await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }
@@ -231,6 +236,7 @@ async function registerCommands(){
 }
 
 client.once('ready',async()=>{await dbInit();await registerCommands();console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
+  await nitro.recover();
   const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;
   for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}
   const checks=(await q("SELECT id,deadline FROM activity_checks WHERE status='OPEN'",[])).rows;

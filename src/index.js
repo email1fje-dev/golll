@@ -1,6 +1,6 @@
 const {
   Client, GatewayIntentBits, Partials, PermissionsBitField, ChannelType,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, AttachmentBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, SlashCommandBuilder
 } = require('discord.js');
 const { Pool } = require('pg');
@@ -58,8 +58,10 @@ async function dbInit() {
   )`);
   await q(`CREATE TABLE IF NOT EXISTS tickets(
     channel_id TEXT PRIMARY KEY, guild_id TEXT, opener_id TEXT, type TEXT,
-    claimed_by TEXT, closed BOOLEAN DEFAULT FALSE, created_at TIMESTAMPTZ DEFAULT NOW()
+    claimed_by TEXT, closed BOOLEAN DEFAULT FALSE, closed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  await q(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ`);
   await q(`CREATE TABLE IF NOT EXISTS giveaways(
     message_id TEXT PRIMARY KEY, guild_id TEXT, channel_id TEXT, prize TEXT,
     ends_at TIMESTAMPTZ, winner_id TEXT, participants JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -69,19 +71,19 @@ async function dbInit() {
     id BIGSERIAL PRIMARY KEY, guild_id TEXT, user_id TEXT, age TEXT, experience TEXT,
     availability TEXT, status TEXT NOT NULL DEFAULT 'PENDING', reviewer_id TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
-  `);
+  )`);
   await q(`CREATE TABLE IF NOT EXISTS activity_checks(
     id BIGSERIAL PRIMARY KEY, guild_id TEXT, message_id TEXT, channel_id TEXT,
     deadline TIMESTAMPTZ, status TEXT NOT NULL DEFAULT 'OPEN',
     closed_by TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
-  `);
+  )`);
   await q(`CREATE TABLE IF NOT EXISTS activity_responses(
     check_id BIGINT, guild_id TEXT, user_id TEXT, responded_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY(check_id,user_id)
-  `);
+  )`);
   await q(`CREATE TABLE IF NOT EXISTS temp_voice(
     channel_id TEXT PRIMARY KEY, guild_id TEXT, owner_id TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
-  `);
+  )`);
   await q(`CREATE TABLE IF NOT EXISTS economy(
     guild_id TEXT, user_id TEXT, balance BIGINT NOT NULL DEFAULT 0,
     xp INT NOT NULL DEFAULT 0, level INT NOT NULL DEFAULT 0,
@@ -172,7 +174,11 @@ async function setupGuild(guild, repair=false) {
     const exists=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
     if(!exists) await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
   }
-  await sendStaffPanel(guild, repair);\n  await sendApplicationPanel(guild, repair);\n  await sendActivityPanel(guild, repair);\n  await sendGiveawayPanel(guild, repair);\n  await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
+  await sendStaffPanel(guild, repair);
+  await sendApplicationPanel(guild, repair);
+  await sendActivityPanel(guild, repair);
+  await sendGiveawayPanel(guild, repair);
+  await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }
 
@@ -193,11 +199,16 @@ async function openTicket(interaction,type='General Support'){
     ]
   });
   await q('INSERT INTO tickets(channel_id,guild_id,opener_id,type) VALUES($1,$2,$3,$4)',[c.id,interaction.guild.id,interaction.user.id,type]);
-  const row=new ActionRowBuilder().addComponents(
+  const row1=new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('ticket_claim').setLabel('🙋 Claim').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ticket_add').setLabel('➕ Add Member').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('ticket_close').setLabel('🔒 Close').setStyle(ButtonStyle.Danger)
   );
-  await c.send({content:`${interaction.user} <@&${support?.id||''}>`,embeds:[new EmbedBuilder().setTitle('🎫 '+type).setDescription('A staff member will be with you shortly.').setColor(0x5865F2)],components:[row]});
+  const row2=new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_reopen').setLabel('🔓 Reopen').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ticket_transcript').setLabel('📄 Transcript').setStyle(ButtonStyle.Primary)
+  );
+  await c.send({content:`${interaction.user} <@&${support?.id||''}>`,embeds:[new EmbedBuilder().setTitle('🎫 '+type).setDescription('A staff member will be with you shortly.').setColor(0x5865F2)],components:[row1,row2]});
   return interaction.reply({content:`🎫 Ticket created: ${c}`,ephemeral:true});
 }
 
@@ -210,20 +221,40 @@ async function registerCommands(){
     new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('Minutes').setRequired(true).setMinValue(1).setMaxValue(40320)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
     new SlashCommandBuilder().setName('kick').setDescription('Kick a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
     new SlashCommandBuilder().setName('ban').setDescription('Ban a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
-    new SlashCommandBuilder().setName('loa').setDescription('Request staff leave of absence'),
-    new SlashCommandBuilder().setName('active').setDescription('Toggle your staff active status'),\n    new SlashCommandBuilder().setName('activity').setDescription('Start a staff activity check').addIntegerOption(o=>o.setName('minutes').setDescription('Response window').setRequired(true).setMinValue(1).setMaxValue(10080)),
-    new SlashCommandBuilder().setName('apply').setDescription('Open staff application'),
     new SlashCommandBuilder().setName('giveaway').setDescription('Create a giveaway').addStringOption(o=>o.setName('prize').setDescription('Prize').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('Duration').setRequired(true).setMinValue(1).setMaxValue(10080)),
     new SlashCommandBuilder().setName('balance').setDescription('Show balance').addUserOption(o=>o.setName('user').setDescription('Member')),
     new SlashCommandBuilder().setName('daily').setDescription('Claim daily coins'),
-    new SlashCommandBuilder().setName('pay').setDescription('Pay coins').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1)),\n    new SlashCommandBuilder().setName('voice').setDescription('Create your temporary voice channel')
+    new SlashCommandBuilder().setName('pay').setDescription('Pay coins').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1)),
+    new SlashCommandBuilder().setName('voice').setDescription('Create your temporary voice channel')
   ];
   await client.application.commands.set(commands.map(x=>x.toJSON()));
 }
 
-client.once('ready',async()=>{await dbInit();await registerCommands();console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);\n  const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;\n  for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}\n  const checks=(await q("SELECT id,deadline FROM activity_checks WHERE status='OPEN'",[])).rows;\n  for(const x of checks){const ms=Math.max(1000,new Date(x.deadline).getTime()-Date.now());setTimeout(()=>closeActivity(x.id),ms);}\n});
+client.once('ready',async()=>{await dbInit();await registerCommands();console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
+  const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;
+  for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}
+  const checks=(await q("SELECT id,deadline FROM activity_checks WHERE status='OPEN'",[])).rows;
+  for(const x of checks){const ms=Math.max(1000,new Date(x.deadline).getTime()-Date.now());setTimeout(()=>closeActivity(x.id),ms);}
+});
 
-client.on('voiceStateUpdate',async(oldS,newS)=>{\n  if(!newS.channelId||newS.channelId===oldS.channelId) return;\n  const cfg=(await q('SELECT data FROM guild_config WHERE guild_id=$1',[newS.guild.id])).rows[0]?.data;\n  const trigger=cfg?.channels?.['🔊 VOICE']?.['🔊・General'];\n  if(newS.channelId!==trigger) return;\n  const existing=(await q('SELECT channel_id FROM temp_voice WHERE guild_id=$1 AND owner_id=$2',[newS.guild.id,newS.member.id])).rows[0];\n  if(existing) return;\n  const c=await newS.guild.channels.create({name:`🔊・${newS.member.displayName}'s Room`.slice(0,100),type:ChannelType.GuildVoice,parent:newS.channel?.parentId});\n  await q('INSERT INTO temp_voice(channel_id,guild_id,owner_id) VALUES($1,$2,$3)',[c.id,newS.guild.id,newS.member.id]);\n  await newS.setChannel(c).catch(()=>{});\n});\nclient.on('voiceStateUpdate',async(oldS,newS)=>{\n  if(!oldS.channelId) return;\n  const row=(await q('SELECT channel_id FROM temp_voice WHERE channel_id=$1',[oldS.channelId])).rows[0];\n  if(row&&oldS.channel?.members.size===0){await oldS.channel.delete().catch(()=>{});await q('DELETE FROM temp_voice WHERE channel_id=$1',[oldS.channelId]);}\n});\n\nclient.on('guildMemberAdd',async member=>{
+client.on('voiceStateUpdate',async(oldS,newS)=>{
+  if(!newS.channelId||newS.channelId===oldS.channelId) return;
+  const cfg=(await q('SELECT data FROM guild_config WHERE guild_id=$1',[newS.guild.id])).rows[0]?.data;
+  const trigger=cfg?.channels?.['🔊 VOICE']?.['🔊・General'];
+  if(newS.channelId!==trigger) return;
+  const existing=(await q('SELECT channel_id FROM temp_voice WHERE guild_id=$1 AND owner_id=$2',[newS.guild.id,newS.member.id])).rows[0];
+  if(existing) return;
+  const c=await newS.guild.channels.create({name:`🔊・${newS.member.displayName}'s Room`.slice(0,100),type:ChannelType.GuildVoice,parent:newS.channel?.parentId});
+  await q('INSERT INTO temp_voice(channel_id,guild_id,owner_id) VALUES($1,$2,$3)',[c.id,newS.guild.id,newS.member.id]);
+  await newS.setChannel(c).catch(()=>{});
+});
+client.on('voiceStateUpdate',async(oldS,newS)=>{
+  if(!oldS.channelId) return;
+  const row=(await q('SELECT channel_id FROM temp_voice WHERE channel_id=$1',[oldS.channelId])).rows[0];
+  if(row&&oldS.channel?.members.size===0){await oldS.channel.delete().catch(()=>{});await q('DELETE FROM temp_voice WHERE channel_id=$1',[oldS.channelId]);}
+});
+
+client.on('guildMemberAdd',async member=>{
   const r=member.guild.roles.cache.find(x=>x.name==='👤 Member');
   if(r) await member.roles.add(r).catch(()=>{});
   const w=member.guild.channels.cache.find(c=>c.name==='📢・welcome'&&c.type===ChannelType.GuildText);
@@ -259,7 +290,19 @@ client.on('interactionCreate',async i=>{
           );
         return i.showModal(modal);
       }
-      if(cmd==='activity'){\n        if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});\n        const minutes=i.options.getInteger('minutes'), deadline=Date.now()+minutes*60000;\n        const ch=i.guild.channels.cache.find(c=>c.name==='📋・activity-check'&&c.type===ChannelType.GuildText);\n        if(!ch) return i.reply({content:'❌ Run /setup first.',ephemeral:true});\n        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('activity_here').setLabel("I'M ACTIVE").setStyle(ButtonStyle.Success));\n        const msg=await ch.send({embeds:[new EmbedBuilder().setTitle('📋 Staff Activity Check').setDescription(`Click I'M ACTIVE before <t:${Math.floor(deadline/1000)}:R>. Approved LOA is exempt.`).setColor(0x57F287)],components:[row]});\n        const r=await q('INSERT INTO activity_checks(guild_id,message_id,channel_id,deadline) VALUES($1,$2,$3,to_timestamp($4/1000.0)) RETURNING id',[i.guild.id,msg.id,ch.id,deadline]);\n        setTimeout(()=>closeActivity(r.rows[0].id),minutes*60000);\n        return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});\n      }\n      if(cmd==='voice') return createTempVoice(i);\n      if(cmd==='active'){
+      if(cmd==='activity'){
+        if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});
+        const minutes=i.options.getInteger('minutes'), deadline=Date.now()+minutes*60000;
+        const ch=i.guild.channels.cache.find(c=>c.name==='📋・activity-check'&&c.type===ChannelType.GuildText);
+        if(!ch) return i.reply({content:'❌ Run /setup first.',ephemeral:true});
+        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('activity_here').setLabel("I'M ACTIVE").setStyle(ButtonStyle.Success));
+        const msg=await ch.send({embeds:[new EmbedBuilder().setTitle('📋 Staff Activity Check').setDescription(`Click I'M ACTIVE before <t:${Math.floor(deadline/1000)}:R>. Approved LOA is exempt.`).setColor(0x57F287)],components:[row]});
+        const r=await q('INSERT INTO activity_checks(guild_id,message_id,channel_id,deadline) VALUES($1,$2,$3,to_timestamp($4/1000.0)) RETURNING id',[i.guild.id,msg.id,ch.id,deadline]);
+        setTimeout(()=>closeActivity(r.rows[0].id),minutes*60000);
+        return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});
+      }
+      if(cmd==='voice') return createTempVoice(i);
+      if(cmd==='active'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const old=(await q('SELECT active FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0]?.active ?? false;
         await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,$3)
@@ -310,21 +353,56 @@ client.on('interactionCreate',async i=>{
       if(i.customId==='staff_loa'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('loa_modal').setTitle('🏖️ Request LOA').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('days').setLabel('Duration (1-14 days)').setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Paragraph).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('extra').setLabel('Extra info (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false))));}
       if(i.customId==='staff_refresh'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});const s=(await q('SELECT active,loa_until FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0];return i.reply({content:'📊 Status: '+(s?.active?'ACTIVE':'INACTIVE')+(s?.loa_until?' | LOA until '+new Date(s.loa_until).toLocaleDateString() :''),ephemeral:true});}
       if(i.customId==='staff_apply_status'){const a=(await q('SELECT status FROM applications WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1',[i.guild.id,i.user.id])).rows[0];return i.reply({content:a?'📋 Your latest application: **'+a.status+'**':'📋 You have no application yet.',ephemeral:true});}
-\n      if(i.customId==='staff_end_loa'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});await q('UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id]);return i.reply({content:'🔙 Your LOA has ended. You are ACTIVE again.',ephemeral:true});}
+
+      if(i.customId==='staff_end_loa'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});await q('UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id]);return i.reply({content:'🔙 Your LOA has ended. You are ACTIVE again.',ephemeral:true});}
       if(i.customId==='activity_start'){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('activity_modal').setTitle('📋 Start Activity Check').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('minutes').setLabel('Response window (minutes)').setStyle(TextInputStyle.Short).setRequired(true))));}
       if(i.customId==='activity_close'){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});const open=(await q("SELECT id FROM activity_checks WHERE guild_id=$1 AND status='OPEN' ORDER BY id DESC LIMIT 1",[i.guild.id])).rows[0];if(!open)return i.reply({content:'❌ No open activity check.',ephemeral:true});await closeActivity(open.id,i.user.id);return i.reply({content:'🔒 Activity check closed.',ephemeral:true});}
       if(i.customId==='giveaway_create'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('giveaway_modal').setTitle('🎁 Create Giveaway').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('prize').setLabel('Prize').setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('minutes').setLabel('Duration (minutes)').setStyle(TextInputStyle.Short).setRequired(true))));}
       if(i.customId.startsWith('app_')){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});const [action,id]=i.customId.split(':');const status={app_interview:'INTERVIEW',app_accept:'ACCEPTED',app_deny:'DENIED',app_archive:'ARCHIVED'}[action];if(!status)return;await q('UPDATE applications SET status=$1,reviewer_id=$2,updated_at=NOW() WHERE id=$3',[status,i.user.id,id]);const app=(await q('SELECT user_id FROM applications WHERE id=$1',[id])).rows[0];if(app)await client.users.fetch(app.user_id).then(u=>u.send(`📋 Your staff application status is now **${status}**.`).catch(()=>{})).catch(()=>{});return i.update({content:`📋 Application marked **${status}** by ${i.user}.`,embeds:[],components:[]});}
-      if(i.customId==='activity_here'){\n        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});\n        const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];\n        if(!check||check.status!=='OPEN') return i.reply({content:'❌ This check is closed.',ephemeral:true});\n        await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()`,[i.guild.id,i.user.id]);\n        return i.reply({content:'🟢 Recorded — you are ACTIVE.',ephemeral:true});\n      }
-      if(i.customId==='goll_ticket_menu') return i.reply({content:'Choose a ticket type:',components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('ticket_type').setPlaceholder('🎫 Select a type').addOptions(\n        ['🛠️ General Support','🚨 Report a User','🤝 Partnership','📝 Staff Question','💳 Purchase Support'].map(x=>({label:x.slice(2),value:x}))\n      ))],ephemeral:true});
+      if(i.customId==='activity_here'){
+        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+        const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];
+        if(!check||check.status!=='OPEN') return i.reply({content:'❌ This check is closed.',ephemeral:true});
+        await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()`,[i.guild.id,i.user.id]);
+        return i.reply({content:'🟢 Recorded — you are ACTIVE.',ephemeral:true});
+      }
+      if(i.customId==='goll_ticket_menu') return i.reply({content:'Choose a ticket type:',components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('ticket_type').setPlaceholder('🎫 Select a type').addOptions(
+        ['🛠️ General Support','🚨 Report a User','🤝 Partnership','📝 Staff Question','💳 Purchase Support'].map(x=>({label:x.slice(2),value:x}))
+      ))],ephemeral:true});
       if(i.customId==='ticket_claim'){
         if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});
         await q('UPDATE tickets SET claimed_by=$1 WHERE channel_id=$2',[i.user.id,i.channel.id]); return i.reply(`🙋 Ticket claimed by ${i.user}.`);
       }
       if(i.customId==='ticket_close'){
         if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});
-        await q('UPDATE tickets SET closed=true WHERE channel_id=$1',[i.channel.id]); await i.reply('🔒 Closing ticket in 5 seconds...');
-        setTimeout(()=>i.channel.delete('Goll ticket closed').catch(()=>{}),5000);
+        const t=(await q('SELECT opener_id FROM tickets WHERE channel_id=$1',[i.channel.id])).rows[0];
+        await q('UPDATE tickets SET closed=true,closed_at=NOW() WHERE channel_id=$1',[i.channel.id]);
+        if(t?.opener_id) await i.channel.permissionOverwrites.edit(t.opener_id,{SendMessages:false}).catch(()=>{});
+        await i.channel.setName(('closed-'+i.channel.name).slice(0,100)).catch(()=>{});
+        return i.reply({content:'🔒 Ticket closed. Use Reopen if needed, or Transcript to export the conversation.'});
+      }
+      if(i.customId==='ticket_reopen'){
+        if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});
+        const t=(await q('SELECT opener_id,closed FROM tickets WHERE channel_id=$1',[i.channel.id])).rows[0];
+        if(!t?.closed)return i.reply({content:'ℹ️ Ticket is already open.',ephemeral:true});
+        await q('UPDATE tickets SET closed=false WHERE channel_id=$1',[i.channel.id]);
+        if(t.opener_id) await i.channel.permissionOverwrites.edit(t.opener_id,{SendMessages:true}).catch(()=>{});
+        await i.channel.setName(i.channel.name.replace(/^closed-/,'').slice(0,100)).catch(()=>{});
+        return i.reply('🔓 Ticket reopened.');
+      }
+      if(i.customId==='ticket_add'){
+        if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});
+        const modal=new ModalBuilder().setCustomId('ticket_add_modal').setTitle('➕ Add Member').addComponents(
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('user_id').setLabel('Discord User ID').setStyle(TextInputStyle.Short).setRequired(true))
+        );
+        return i.showModal(modal);
+      }
+      if(i.customId==='ticket_transcript'){
+        if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});
+        const msgs=await i.channel.messages.fetch({limit:100}).catch(()=>new Map());
+        const lines=[...msgs.values()].sort((a,b)=>a.createdTimestamp-b.createdTimestamp).map(m=>`[${new Date(m.createdTimestamp).toISOString()}] ${m.author.tag}: ${m.content || '[embed/attachment]'}`);
+        const file=new AttachmentBuilder(Buffer.from(lines.join('\\n')||'No messages.','utf8'),{name:`transcript-${i.channel.id}.txt`});
+        return i.reply({content:'📄 Transcript generated.',files:[file],ephemeral:true});
       }
       if(i.customId==='giveaway_join'){
         const r=(await q('SELECT participants,status FROM giveaways WHERE message_id=$1',[i.message.id])).rows[0];
@@ -340,7 +418,9 @@ client.on('interactionCreate',async i=>{
       ));
     }
 
-    if(i.isStringSelectMenu() && i.customId==='ticket_type') return openTicket(i,i.values[0]);\n\n    if(i.isModalSubmit()){
+    if(i.isStringSelectMenu() && i.customId==='ticket_type') return openTicket(i,i.values[0]);
+
+    if(i.isModalSubmit()){
       if(i.customId==='loa_modal'){
         const days=Math.max(1,Math.min(14,parseInt(i.fields.getTextInputValue('days'),10)||1)),reason=i.fields.getTextInputValue('reason'),extra=i.fields.fields.has('extra')?i.fields.getTextInputValue('extra'):'';
         const until=new Date(Date.now()+days*86400000);
@@ -349,6 +429,13 @@ client.on('interactionCreate',async i=>{
         const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('loa_accept:'+i.user.id).setLabel('✅ Accept').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('loa_decline:'+i.user.id).setLabel('❌ Decline').setStyle(ButtonStyle.Danger));
         if(log) await log.send({embeds:[new EmbedBuilder().setTitle('🏖️ LOA Request').setDescription(`Staff: ${i.user}\\nDuration: **${days} days**\\nReturn: <t:${Math.floor(until.getTime()/1000)}:F>\\nReason: ${reason}${extra?'\\nExtra: '+extra:''}`).setColor(0xF1C40F)],components:[row]});
         return i.reply({content:`🏖️ LOA submitted for ${days} days. Awaiting staff review.`,ephemeral:true});
+      }
+      if(i.customId==='ticket_add_modal'){
+        const userId=i.fields.getTextInputValue('user_id').trim();
+        const member=await i.guild.members.fetch(userId).catch(()=>null);
+        if(!member)return i.reply({content:'❌ Member not found.',ephemeral:true});
+        await i.channel.permissionOverwrites.edit(member.id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true});
+        return i.reply({content:`➕ Added ${member} to this ticket.`});
       }
       if(i.customId==='activity_modal'){const minutes=Math.max(1,Math.min(10080,parseInt(i.fields.getTextInputValue('minutes'),10)||1)),deadline=Date.now()+minutes*60000;const ch=i.guild.channels.cache.find(c=>c.name==='📋・activity-check'&&c.type===ChannelType.GuildText);const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('activity_here').setLabel("I'M ACTIVE").setStyle(ButtonStyle.Success));const msg=await ch.send({embeds:[new EmbedBuilder().setTitle('📋 Staff Activity Check').setDescription(`Click I'M ACTIVE before <t:${Math.floor(deadline/1000)}:R>. Approved LOA is exempt.`).setColor(0x57F287)],components:[row]});const r=await q('INSERT INTO activity_checks(guild_id,message_id,channel_id,deadline) VALUES($1,$2,$3,to_timestamp($4/1000.0)) RETURNING id',[i.guild.id,msg.id,ch.id,deadline]);setTimeout(()=>closeActivity(r.rows[0].id),minutes*60000);return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});}
       if(i.customId==='giveaway_modal'){const prize=i.fields.getTextInputValue('prize'),minutes=Math.max(1,Math.min(10080,parseInt(i.fields.getTextInputValue('minutes'),10)||1)),end=Date.now()+minutes*60000;const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('giveaway_join').setLabel('🎉 ENTER').setStyle(ButtonStyle.Success));const ch=i.guild.channels.cache.find(c=>c.name==='🎉・giveaways'&&c.type===ChannelType.GuildText);const msg=await ch.send({embeds:[new EmbedBuilder().setTitle('🎁 Giveaway').setDescription(`**Prize:** ${prize}\\n**Ends:** <t:${Math.floor(end/1000)}:R>\\nClick ENTER to participate!`).setColor(0xF1C40F)],components:[row]});await q('INSERT INTO giveaways(message_id,guild_id,channel_id,prize,ends_at) VALUES($1,$2,$3,$4,to_timestamp($5/1000.0))',[msg.id,i.guild.id,ch.id,prize,end]);setTimeout(()=>finishGiveaway(msg.id),minutes*60000);return i.reply({content:'✅ Giveaway created.',ephemeral:true});}
@@ -362,12 +449,36 @@ client.on('interactionCreate',async i=>{
         return i.reply({content:'✅ Application submitted. Staff will review it.',ephemeral:true});
       }
     }
-    if(i.isButton() && (i.customId.startsWith('loa_accept:') || i.customId.startsWith('loa_decline:'))){\n      if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});\n      const [action,userId]=i.customId.split(':'); const approved=action==='loa_accept';\n      if(approved) await q('UPDATE staff_status SET active=false,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,userId]);\n      else await q('UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,userId]);\n      return i.update({content:`${approved?'✅ LOA approved':'❌ LOA declined'} by ${i.user}.`,components:[]});\n    }\n  }catch(e){
+    if(i.isButton() && (i.customId.startsWith('loa_accept:') || i.customId.startsWith('loa_decline:'))){
+      if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});
+      const [action,userId]=i.customId.split(':'); const approved=action==='loa_accept';
+      if(approved) await q('UPDATE staff_status SET active=false,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,userId]);
+      else await q('UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,userId]);
+      return i.update({content:`${approved?'✅ LOA approved':'❌ LOA declined'} by ${i.user}.`,components:[]});
+    }
+  }catch(e){
     console.error(e); if(!i.replied&&!i.deferred) await i.reply({content:'❌ Something went wrong.',ephemeral:true}).catch(()=>{}); else if(i.deferred) await i.editReply('❌ Something went wrong.').catch(()=>{});
   }
 });
 
-async function closeActivity(id){\n  const r=(await q("SELECT * FROM activity_checks WHERE id=$1 AND status='OPEN'",[id])).rows[0];\n  if(!r) return;\n  await q("UPDATE activity_checks SET status='CLOSED' WHERE id=$1",[id]);\n  const ch=client.channels.cache.get(r.channel_id);\n  if(ch) await ch.send('📋 Activity check closed. Staff who did not respond should be reviewed by management.');\n}\n\nasync function createTempVoice(i){\n  const existing=(await q('SELECT channel_id FROM temp_voice WHERE guild_id=$1 AND owner_id=$2',[i.guild.id,i.user.id])).rows[0];\n  if(existing) return i.reply({content:`🔊 You already own <#${existing.channel_id}>.`,ephemeral:true});\n  const cat=i.guild.channels.cache.find(c=>c.name==='🔊 VOICE'&&c.type===ChannelType.GuildCategory);\n  const c=await i.guild.channels.create({name:`🔊・${i.user.username}'s Room`.slice(0,100),type:ChannelType.GuildVoice,parent:cat?.id,permissionOverwrites:[{id:i.guild.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect]},{id:i.user.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect,PermissionsBitField.Flags.ManageChannels]}]});\n  await q('INSERT INTO temp_voice(channel_id,guild_id,owner_id) VALUES($1,$2,$3)',[c.id,i.guild.id,i.user.id]);\n  return i.reply({content:`🔊 Created ${c}`,ephemeral:true});\n}\n\nasync function finishGiveaway(messageId){
+async function closeActivity(id){
+  const r=(await q("SELECT * FROM activity_checks WHERE id=$1 AND status='OPEN'",[id])).rows[0];
+  if(!r) return;
+  await q("UPDATE activity_checks SET status='CLOSED' WHERE id=$1",[id]);
+  const ch=client.channels.cache.get(r.channel_id);
+  if(ch) await ch.send('📋 Activity check closed. Staff who did not respond should be reviewed by management.');
+}
+
+async function createTempVoice(i){
+  const existing=(await q('SELECT channel_id FROM temp_voice WHERE guild_id=$1 AND owner_id=$2',[i.guild.id,i.user.id])).rows[0];
+  if(existing) return i.reply({content:`🔊 You already own <#${existing.channel_id}>.`,ephemeral:true});
+  const cat=i.guild.channels.cache.find(c=>c.name==='🔊 VOICE'&&c.type===ChannelType.GuildCategory);
+  const c=await i.guild.channels.create({name:`🔊・${i.user.username}'s Room`.slice(0,100),type:ChannelType.GuildVoice,parent:cat?.id,permissionOverwrites:[{id:i.guild.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect]},{id:i.user.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect,PermissionsBitField.Flags.ManageChannels]}]});
+  await q('INSERT INTO temp_voice(channel_id,guild_id,owner_id) VALUES($1,$2,$3)',[c.id,i.guild.id,i.user.id]);
+  return i.reply({content:`🔊 Created ${c}`,ephemeral:true});
+}
+
+async function finishGiveaway(messageId){
   const r=(await q('SELECT * FROM giveaways WHERE message_id=$1',[messageId])).rows[0]; if(!r||r.status!=='OPEN')return;
   const p=r.participants||[], channel=client.channels.cache.get(r.channel_id), msg=channel&&await channel.messages.fetch(messageId).catch(()=>null);
   const winner=p.length?p[Math.floor(Math.random()*p.length)]:null;

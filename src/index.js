@@ -84,7 +84,12 @@ async function dbInit() {
     check_id BIGINT, guild_id TEXT, user_id TEXT, responded_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY(check_id,user_id)
   )`);
-  await q(`CREATE TABLE IF NOT EXISTS temp_voice(
+
+  await q(`CREATE TABLE IF NOT EXISTS activity_misses(
+    check_id BIGINT, guild_id TEXT, user_id TEXT, reason TEXT NOT NULL DEFAULT 'NO_RESPONSE',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY(check_id,user_id)
+  )`);  await q(`CREATE TABLE IF NOT EXISTS temp_voice(
     channel_id TEXT PRIMARY KEY, guild_id TEXT, owner_id TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
   )`);
   await nitro.dbInit();
@@ -467,12 +472,29 @@ client.on('interactionCreate',async i=>{
   }
 });
 
-async function closeActivity(id){
+async function closeActivity(id, closedBy=null){
   const r=(await q("SELECT * FROM activity_checks WHERE id=$1 AND status='OPEN'",[id])).rows[0];
   if(!r) return;
-  await q("UPDATE activity_checks SET status='CLOSED' WHERE id=$1",[id]);
+  await q("UPDATE activity_checks SET status='CLOSED',closed_by=$2 WHERE id=$1",[id,closedBy]);
+  const guild=client.guilds.cache.get(r.guild_id);
   const ch=client.channels.cache.get(r.channel_id);
-  if(ch) await ch.send('📋 Activity check closed. Staff who did not respond should be reviewed by management.');
+  if(!guild) return;
+  const staffMembers=guild.members.cache.filter(m=>!m.user.bot && isStaff(m));
+  const responses=new Set((await q("SELECT user_id FROM activity_responses WHERE check_id=$1",[id])).rows.map(x=>x.user_id));
+  const misses=[];
+  for(const member of staffMembers.values()){
+    if(responses.has(member.id)) continue;
+    const loa=(await q("SELECT loa_until,active FROM staff_status WHERE guild_id=$1 AND user_id=$2",[guild.id,member.id])).rows[0];
+    const onApprovedLoa=loa?.loa_until && new Date(loa.loa_until).getTime()>Date.now() && loa.active===false;
+    if(onApprovedLoa) continue;
+    misses.push(member);
+    await q("INSERT INTO activity_misses(check_id,guild_id,user_id,reason) VALUES($1,$2,$3,'NO_RESPONSE') ON CONFLICT DO NOTHING",[id,guild.id,member.id]);
+  }
+  if(ch){
+    const embed=new EmbedBuilder().setTitle('📋 Activity Check Closed').setDescription('**Responded:** '+responses.size+'\\n**Missing:** '+misses.length+'\\n**LOA exempt:** approved LOA members were excluded.'+(closedBy?'\\n**Closed by:** <@'+closedBy+'>':'')).setColor(misses.length?0xED4245:0x57F287);
+    await ch.send({embeds:[embed]});
+    if(misses.length) await ch.send({content:'⚠️ No response: '+misses.map(m=>m.toString()).join(', ')});
+  }
 }
 
 async function createTempVoice(i){

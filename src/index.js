@@ -72,6 +72,9 @@ async function dbInit() {
     ends_at TIMESTAMPTZ, winner_id TEXT, participants JSONB NOT NULL DEFAULT '[]'::jsonb,
     status TEXT NOT NULL DEFAULT 'OPEN'
   )`);
+  await q(`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS reward_coins BIGINT NOT NULL DEFAULT 0`);
+  await q(`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS reward_role_id TEXT`);
+  await q(`ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS reward_claimed BOOLEAN NOT NULL DEFAULT FALSE`);
   await q(`CREATE TABLE IF NOT EXISTS applications(
     id BIGSERIAL PRIMARY KEY, guild_id TEXT, user_id TEXT, age TEXT, experience TEXT,
     availability TEXT, status TEXT NOT NULL DEFAULT 'PENDING', reviewer_id TEXT,
@@ -548,7 +551,7 @@ client.on('interactionCreate',async i=>{
         const p=(r.participants||[]).filter(x=>x!==r.winner_id);
         if(!p.length) return i.reply({content:'❌ No other eligible entries.',ephemeral:true});
         const winner=p[Math.floor(Math.random()*p.length)];
-        await q('UPDATE giveaways SET winner_id=$1 WHERE message_id=$2',[winner,i.message.id]);
+        await q('UPDATE giveaways SET winner_id=$1,reward_claimed=false WHERE message_id=$2',[winner,i.message.id]);
         const winners=i.guild.channels.cache.find(x=>x.name==='🏆・winners'&&x.type===ChannelType.GuildText);
         if(winners) await winners.send({embeds:[new EmbedBuilder().setTitle('🔄 Giveaway Reroll').setDescription(`Prize: **${r.prize}**\\nNew winner: <@${winner}>\\nRerolled by: ${i.user}`).setColor(0x5865F2)]});
         return i.reply(`🔄 New winner: <@${winner}> — **${r.prize}**!`);

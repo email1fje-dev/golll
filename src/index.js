@@ -374,8 +374,9 @@ client.on('interactionCreate',async i=>{
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];
         if(!check||check.status!=='OPEN') return i.reply({content:'❌ This check is closed.',ephemeral:true});
+        await q(`INSERT INTO activity_responses(check_id,guild_id,user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[check.id,i.guild.id,i.user.id]);
         await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()`,[i.guild.id,i.user.id]);
-        return i.reply({content:'🟢 Recorded — you are ACTIVE.',ephemeral:true});
+        return i.reply({content:'🟢 Recorded — you are ACTIVE for this check.',ephemeral:true});
       }
       if(i.customId==='goll_ticket_menu') return i.reply({content:'Choose a ticket type:',components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('ticket_type').setPlaceholder('🎫 Select a type').addOptions(
         ['🛠️ General Support','🚨 Report a User','🤝 Partnership','📝 Staff Question','💳 Purchase Support'].map(x=>({label:x.slice(2),value:x}))

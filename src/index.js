@@ -407,7 +407,8 @@ client.on('interactionCreate',async i=>{
       if(cmd==='giveaway'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const prize=i.options.getString('prize'), minutes=i.options.getInteger('minutes'), end=Date.now()+minutes*60000;
-        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('giveaway_join').setLabel('🎉 ENTER').setStyle(ButtonStyle.Success));
+        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('giveaway_join').setLabel('🎉 ENTER').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('giveaway_reroll').setLabel('🔄 REROLL').setStyle(ButtonStyle.Secondary));
         const msg=await i.channel.send({embeds:[new EmbedBuilder().setTitle('🎁 Giveaway').setDescription(`**Prize:** ${prize}\\n**Ends:** <t:${Math.floor(end/1000)}:R>\\nClick ENTER to participate!`).setColor(0xF1C40F)],components:[row]});
         await q('INSERT INTO giveaways(message_id,guild_id,channel_id,prize,ends_at) VALUES($1,$2,$3,$4,to_timestamp($5/1000.0))',[msg.id,i.guild.id,i.channel.id,prize,end]);
         await i.reply({content:'✅ Giveaway created.',ephemeral:true});
@@ -539,6 +540,18 @@ client.on('interactionCreate',async i=>{
         const lines=[...msgs.values()].sort((a,b)=>a.createdTimestamp-b.createdTimestamp).map(m=>`[${new Date(m.createdTimestamp).toISOString()}] ${m.author.tag}: ${m.content || '[embed/attachment]'}`);
         const file=new AttachmentBuilder(Buffer.from(lines.join('\\n')||'No messages.','utf8'),{name:`transcript-${i.channel.id}.txt`});
         return i.reply({content:'📄 Transcript generated.',files:[file],ephemeral:true});
+      }
+      if(i.customId==='giveaway_reroll'){
+        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+        const r=(await q("SELECT * FROM giveaways WHERE message_id=$1",[i.message.id])).rows[0];
+        if(!r || r.status==='OPEN') return i.reply({content:'❌ The giveaway must be finished before rerolling.',ephemeral:true});
+        const p=(r.participants||[]).filter(x=>x!==r.winner_id);
+        if(!p.length) return i.reply({content:'❌ No other eligible entries.',ephemeral:true});
+        const winner=p[Math.floor(Math.random()*p.length)];
+        await q('UPDATE giveaways SET winner_id=$1 WHERE message_id=$2',[winner,i.message.id]);
+        const winners=i.guild.channels.cache.find(x=>x.name==='🏆・winners'&&x.type===ChannelType.GuildText);
+        if(winners) await winners.send({embeds:[new EmbedBuilder().setTitle('🔄 Giveaway Reroll').setDescription(`Prize: **${r.prize}**\\nNew winner: <@${winner}>\\nRerolled by: ${i.user}`).setColor(0x5865F2)]});
+        return i.reply(`🔄 New winner: <@${winner}> — **${r.prize}**!`);
       }
       if(i.customId==='giveaway_join'){
         const r=(await q('SELECT participants,status FROM giveaways WHERE message_id=$1',[i.message.id])).rows[0];

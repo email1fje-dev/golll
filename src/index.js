@@ -73,8 +73,11 @@ async function dbInit() {
   await q(`CREATE TABLE IF NOT EXISTS applications(
     id BIGSERIAL PRIMARY KEY, guild_id TEXT, user_id TEXT, age TEXT, experience TEXT,
     availability TEXT, status TEXT NOT NULL DEFAULT 'PENDING', reviewer_id TEXT,
+    decision_reason TEXT, reviewed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  await q(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS decision_reason TEXT`);
+  await q(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ`);
   await q(`CREATE TABLE IF NOT EXISTS activity_checks(
     id BIGSERIAL PRIMARY KEY, guild_id TEXT, message_id TEXT, channel_id TEXT,
     deadline TIMESTAMPTZ, status TEXT NOT NULL DEFAULT 'OPEN',
@@ -217,8 +220,7 @@ async function openTicket(interaction,type='General Support'){
   const row2=new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('ticket_reopen').setLabel('🔓 Reopen').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('ticket_transcript').setLabel('📄 Transcript').setStyle(ButtonStyle.Primary)
-  );
-  await c.send({content:`${interaction.user} <@&${support?.id||''}>`,embeds:[new EmbedBuilder().setTitle('🎫 '+type).setDescription('A staff member will be with you shortly.').setColor(0x5865F2)],components:[row1,row2]});
+  );  await c.send({content:`${interaction.user} <@&${support?.id||''}>`,embeds:[new EmbedBuilder().setTitle('🎫 '+type).setDescription('A staff member will be with you shortly.').setColor(0x5865F2)],components:[row1,row2]});
   return interaction.reply({content:`🎫 Ticket created: ${c}`,ephemeral:true});
 }
 
@@ -363,13 +365,55 @@ client.on('interactionCreate',async i=>{
       if(i.customId==='staff_active'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});await q('INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()',[i.guild.id,i.user.id]);return i.reply({content:'🟢 You are marked ACTIVE.',ephemeral:true});}
       if(i.customId==='staff_loa'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('loa_modal').setTitle('🏖️ Request LOA').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('days').setLabel('Duration (1-14 days)').setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Paragraph).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('extra').setLabel('Extra info (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false))));}
       if(i.customId==='staff_refresh'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});const s=(await q('SELECT active,loa_until FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0];return i.reply({content:'📊 Status: '+(s?.active?'ACTIVE':'INACTIVE')+(s?.loa_until?' | LOA until '+new Date(s.loa_until).toLocaleDateString() :''),ephemeral:true});}
-      if(i.customId==='staff_apply_status'){const a=(await q('SELECT status FROM applications WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1',[i.guild.id,i.user.id])).rows[0];return i.reply({content:a?'📋 Your latest application: **'+a.status+'**':'📋 You have no application yet.',ephemeral:true});}
+      if(i.customId==='staff_apply_status'){
+        const a=(await q('SELECT id,status,reviewer_id,decision_reason,created_at,updated_at FROM applications WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1',[i.guild.id,i.user.id])).rows[0];
+        if(!a) return i.reply({content:'📋 You have no application yet.',ephemeral:true});
+        return i.reply({content:`📋 Application #${a.id} — **${a.status}**${a.decision_reason?'\\nReason: '+a.decision_reason:''}`,ephemeral:true});
+      }
 
       if(i.customId==='staff_end_loa'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});await q('UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id]);return i.reply({content:'🔙 Your LOA has ended. You are ACTIVE again.',ephemeral:true});}
       if(i.customId==='activity_start'){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('activity_modal').setTitle('📋 Start Activity Check').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('minutes').setLabel('Response window (minutes)').setStyle(TextInputStyle.Short).setRequired(true))));}
       if(i.customId==='activity_close'){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});const open=(await q("SELECT id FROM activity_checks WHERE guild_id=$1 AND status='OPEN' ORDER BY id DESC LIMIT 1",[i.guild.id])).rows[0];if(!open)return i.reply({content:'❌ No open activity check.',ephemeral:true});await closeActivity(open.id,i.user.id);return i.reply({content:'🔒 Activity check closed.',ephemeral:true});}
       if(i.customId==='giveaway_create'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('giveaway_modal').setTitle('🎁 Create Giveaway').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('prize').setLabel('Prize').setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('minutes').setLabel('Duration (minutes)').setStyle(TextInputStyle.Short).setRequired(true))));}
-      if(i.customId.startsWith('app_')){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});const [action,id]=i.customId.split(':');const status={app_interview:'INTERVIEW',app_accept:'ACCEPTED',app_deny:'DENIED',app_archive:'ARCHIVED'}[action];if(!status)return;await q('UPDATE applications SET status=$1,reviewer_id=$2,updated_at=NOW() WHERE id=$3',[status,i.user.id,id]);const app=(await q('SELECT user_id FROM applications WHERE id=$1',[id])).rows[0];if(app)await client.users.fetch(app.user_id).then(u=>u.send(`📋 Your staff application status is now **${status}**.`).catch(()=>{})).catch(()=>{});return i.update({content:`📋 Application marked **${status}** by ${i.user}.`,embeds:[],components:[]});}
+      if(i.customId.startsWith('app_')){
+        if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});
+        const [action,id]=i.customId.split(':');
+        const requested={app_interview:'INTERVIEW',app_accept:'ACCEPTED',app_deny:'DENIED',app_archive:'ARCHIVED'}[action];
+        if(!requested) return;
+        const app=(await q('SELECT * FROM applications WHERE id=$1 AND guild_id=$2',[id,i.guild.id])).rows[0];
+        if(!app) return i.reply({content:'❌ Application not found.',ephemeral:true});
+
+        const allowed =
+          requested==='INTERVIEW' ? app.status==='PENDING' :
+          requested==='ACCEPTED' || requested==='DENIED' ? app.status==='INTERVIEW' :
+          requested==='ARCHIVED' ? app.status!=='ARCHIVED' : false;
+        if(!allowed) return i.reply({content:`❌ Invalid status change. Current status: **${app.status}**.`,ephemeral:true});
+
+        let reason='';
+        if(requested==='DENIED'){
+          const modal=new ModalBuilder().setCustomId(`app_deny_modal:${id}`).setTitle('❌ Deny Application').addComponents(
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Paragraph).setRequired(true))
+          );
+          return i.showModal(modal);
+        }
+
+        await q('UPDATE applications SET status=$1,reviewer_id=$2,reviewed_at=NOW(),updated_at=NOW() WHERE id=$3',[requested,i.user.id,id]);
+
+        if(requested==='ACCEPTED'){
+          const member=await i.guild.members.fetch(app.user_id).catch(()=>null);
+          const trial=i.guild.roles.cache.find(r=>r.name==='📝 Trial Staff');
+          if(member&&trial) await member.roles.add(trial).catch(()=>{});
+        }
+
+        const logText=`📋 Application #${id} → **${requested}**\\nReviewer: ${i.user}\\nApplicant: <@${app.user_id}>`;
+        if(i.channel?.isTextBased()) await i.channel.send({content:logText}).catch(()=>{});
+        await client.users.fetch(app.user_id).then(u=>u.send(`📋 Your staff application #${id} is now **${requested}**.`).catch(()=>{})).catch(()=>{});
+
+        return i.update({
+          content:logText,
+          components:[]
+        });
+      }
       if(i.customId==='activity_here'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];
@@ -437,8 +481,7 @@ client.on('interactionCreate',async i=>{
         const days=Math.max(1,Math.min(14,parseInt(i.fields.getTextInputValue('days'),10)||1)),reason=i.fields.getTextInputValue('reason'),extra=i.fields.fields.has('extra')?i.fields.getTextInputValue('extra'):'';
         const until=new Date(Date.now()+days*86400000);
         await q(`INSERT INTO staff_status(guild_id,user_id,active,loa_until,loa_reason) VALUES($1,$2,false,$3,$4) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=false,loa_until=$3,loa_reason=$4,updated_at=NOW()`,[i.guild.id,i.user.id,until,reason+(extra?' | '+extra:'')]);
-        const log=i.guild.channels.cache.find(c=>c.name==='🏖️・loa-logs'&&c.type===ChannelType.GuildText);
-        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('loa_accept:'+i.user.id).setLabel('✅ Accept').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('loa_decline:'+i.user.id).setLabel('❌ Decline').setStyle(ButtonStyle.Danger));
+        const log=i.guild.channels.cache.find(c=>c.name==='🏖️・loa-logs'&&c.type===ChannelType.GuildText);        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('loa_accept:'+i.user.id).setLabel('✅ Accept').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('loa_decline:'+i.user.id).setLabel('❌ Decline').setStyle(ButtonStyle.Danger));
         if(log) await log.send({embeds:[new EmbedBuilder().setTitle('🏖️ LOA Request').setDescription(`Staff: ${i.user}\\nDuration: **${days} days**\\nReturn: <t:${Math.floor(until.getTime()/1000)}:F>\\nReason: ${reason}${extra?'\\nExtra: '+extra:''}`).setColor(0xF1C40F)],components:[row]});
         return i.reply({content:`🏖️ LOA submitted for ${days} days. Awaiting staff review.`,ephemeral:true});
       }
@@ -452,13 +495,42 @@ client.on('interactionCreate',async i=>{
       if(i.customId==='activity_modal'){const minutes=Math.max(1,Math.min(10080,parseInt(i.fields.getTextInputValue('minutes'),10)||1)),deadline=Date.now()+minutes*60000;const ch=i.guild.channels.cache.find(c=>c.name==='📋・activity-check'&&c.type===ChannelType.GuildText);const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('activity_here').setLabel("I'M ACTIVE").setStyle(ButtonStyle.Success));const msg=await ch.send({embeds:[new EmbedBuilder().setTitle('📋 Staff Activity Check').setDescription(`Click I'M ACTIVE before <t:${Math.floor(deadline/1000)}:R>. Approved LOA is exempt.`).setColor(0x57F287)],components:[row]});const r=await q('INSERT INTO activity_checks(guild_id,message_id,channel_id,deadline) VALUES($1,$2,$3,to_timestamp($4/1000.0)) RETURNING id',[i.guild.id,msg.id,ch.id,deadline]);setTimeout(()=>closeActivity(r.rows[0].id),minutes*60000);return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});}
       if(i.customId==='giveaway_modal'){const prize=i.fields.getTextInputValue('prize'),minutes=Math.max(1,Math.min(10080,parseInt(i.fields.getTextInputValue('minutes'),10)||1)),end=Date.now()+minutes*60000;const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('giveaway_join').setLabel('🎉 ENTER').setStyle(ButtonStyle.Success));const ch=i.guild.channels.cache.find(c=>c.name==='🎉・giveaways'&&c.type===ChannelType.GuildText);const msg=await ch.send({embeds:[new EmbedBuilder().setTitle('🎁 Giveaway').setDescription(`**Prize:** ${prize}\\n**Ends:** <t:${Math.floor(end/1000)}:R>\\nClick ENTER to participate!`).setColor(0xF1C40F)],components:[row]});await q('INSERT INTO giveaways(message_id,guild_id,channel_id,prize,ends_at) VALUES($1,$2,$3,$4,to_timestamp($5/1000.0))',[msg.id,i.guild.id,ch.id,prize,end]);setTimeout(()=>finishGiveaway(msg.id),minutes*60000);return i.reply({content:'✅ Giveaway created.',ephemeral:true});}
       if(i.customId==='apply_modal'){
-        const age=i.fields.getTextInputValue('age'), experience=i.fields.getTextInputValue('experience'), availability=i.fields.getTextInputValue('availability');
-        const ins=await q('INSERT INTO applications(guild_id,user_id,age,experience,availability) VALUES($1,$2,$3,$4,$5) RETURNING id',[i.guild.id,i.user.id,age,experience,availability]);
+        const age=i.fields.getTextInputValue('age').trim();
+        const experience=i.fields.getTextInputValue('experience').trim();
+        const availability=i.fields.getTextInputValue('availability').trim();
+
+        const active=(await q("SELECT id FROM applications WHERE guild_id=$1 AND user_id=$2 AND status IN ('PENDING','INTERVIEW') ORDER BY created_at DESC LIMIT 1",[i.guild.id,i.user.id])).rows[0];
+        if(active) return i.reply({content:`❌ You already have an active application (#${active.id}).`,ephemeral:true});
+
+        const ins=await q('INSERT INTO applications(guild_id,user_id,age,experience,availability,status) VALUES($1,$2,$3,$4,$5,\'PENDING\') RETURNING id',[i.guild.id,i.user.id,age,experience,availability]);
         const appId=ins.rows[0].id;
         const log=i.guild.channels.cache.find(c=>c.name==='📋・application-logs'&&c.type===ChannelType.GuildText);
-        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('app_interview:'+appId).setLabel('🎤 Interview').setStyle(ButtonStyle.Secondary),new ButtonBuilder().setCustomId('app_accept:'+appId).setLabel('✅ Accept').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('app_deny:'+appId).setLabel('❌ Deny').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('app_archive:'+appId).setLabel('📦 Archive').setStyle(ButtonStyle.Secondary));
-        if(log) await log.send({embeds:[new EmbedBuilder().setTitle('📝 New Staff Application').setDescription(`Applicant: ${i.user}\\nAge: ${age}\\nAvailability: ${availability}\\n\\nWhy: ${experience}`).setColor(0x5865F2)],components:[row]});
-        return i.reply({content:'✅ Application submitted. Staff will review it.',ephemeral:true});
+        const row=new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('app_interview:'+appId).setLabel('🎤 Interview').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('app_accept:'+appId).setLabel('✅ Accept').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId('app_deny:'+appId).setLabel('❌ Deny').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId('app_archive:'+appId).setLabel('📦 Archive').setStyle(ButtonStyle.Secondary)
+        );
+        const embed=new EmbedBuilder().setTitle(`📝 New Staff Application #${appId}`)
+          .setDescription(`**Applicant:** ${i.user}\\n**Age:** ${age}\\n**Availability:** ${availability}\\n\\n**Why should we choose you?**\\n${experience}`)
+          .addFields({name:'Status',value:'🟡 PENDING',inline:true},{name:'Submitted',value:'<t:'+Math.floor(Date.now()/1000)+':R>',inline:true})
+          .setColor(0x5865F2);
+        if(log) await log.send({embeds:[embed],components:[row]});
+        return i.reply({content:`✅ Application #${appId} submitted. Staff will review it.`,ephemeral:true});
+      }
+
+      if(i.customId.startsWith('app_deny_modal:')){
+        if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});
+        const id=i.customId.split(':')[1];
+        const reason=i.fields.getTextInputValue('reason').trim();
+        const app=(await q('SELECT * FROM applications WHERE id=$1 AND guild_id=$2',[id,i.guild.id])).rows[0];
+        if(!app) return i.reply({content:'❌ Application not found.',ephemeral:true});
+        if(app.status!=='INTERVIEW') return i.reply({content:`❌ Application is already **${app.status}**.`,ephemeral:true});
+        await q('UPDATE applications SET status=\'DENIED\',reviewer_id=$1,decision_reason=$2,reviewed_at=NOW(),updated_at=NOW() WHERE id=$3',[i.user.id,reason,id]);
+        const log=i.guild.channels.cache.find(c=>c.name==='📋・application-logs'&&c.type===ChannelType.GuildText);
+        if(log) await log.send({embeds:[new EmbedBuilder().setTitle(`❌ Application #${id} Denied`).setDescription(`Applicant: <@${app.user_id}>\\nReviewer: ${i.user}\\nReason: ${reason}`).setColor(0xED4245)]});
+        await client.users.fetch(app.user_id).then(u=>u.send(`📋 Your staff application #${id} was denied.\\nReason: ${reason}`).catch(()=>{})).catch(()=>{});
+        return i.reply({content:`❌ Application #${id} denied.`,ephemeral:true});
       }
     }
     if(i.isButton() && (i.customId.startsWith('loa_accept:') || i.customId.startsWith('loa_decline:'))){

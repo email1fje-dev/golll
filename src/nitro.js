@@ -82,7 +82,10 @@ function setupNitro(q, client) {
     const r = (await q(`SELECT * FROM nitro_drops WHERE id=$1`,[id])).rows[0];
     if (!r || r.status !== 'OPEN') return;
     const ready = (await q(`SELECT user_id FROM nitro_drop_ready WHERE drop_id=$1 ORDER BY ready_at ASC`,[id])).rows;
-    const winner = ready[0]?.user_id || null;
+    // The configured READY count is the minimum number of participants needed
+    // before the drop can produce a winner. Once the timer hits, the earliest
+    // READY participant wins if that threshold was reached.
+    const winner = ready.length >= Number(r.ready_required) ? (ready[0]?.user_id || null) : null;
     const status = winner ? 'CLAIMED' : 'EXPIRED';
     await q(`UPDATE nitro_drops SET status=$1,winner_id=$2 WHERE id=$3`,[status,winner,id]);
     const updated = (await q('SELECT * FROM nitro_drops WHERE id=$1',[id])).rows[0];

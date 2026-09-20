@@ -174,7 +174,7 @@ client.on('interactionCreate',async i=>{
       const cmd=i.commandName;
       if(cmd==='setup'){
         if(!isAdmin(i.member)) return i.reply({content:'❌ Manage Server is required.',ephemeral:true});
-        await i.deferReply({ephemeral:true}); const r=await setupGuild(i.guild,i.options.getSubcommand()==='repair');
+        await i.deferReply({ephemeral:true}); const r=await setupGuild(i.guild,i.options.getSubcommand(false)==='repair');
         return i.editReply(`✅ Goll setup complete — ${Object.keys(r.roles).length} roles, ${Object.keys(r.channels).length} categories.`);
       }
       if(cmd==='goll') return i.reply({ephemeral:true,embeds:[new EmbedBuilder().setTitle('🤖 Goll Control Center').setDescription('⚙️ Setup  •  👮 Staff  •  🎫 Tickets  •  🛡️ Moderation  •  🎁 Giveaways  •  💰 Economy  •  🔊 Voice').setColor(0x5865F2)]});
@@ -244,7 +244,7 @@ client.on('interactionCreate',async i=>{
     }
 
     if(i.isButton()){\n      if(i.customId==='activity_here'){\n        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});\n        const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];\n        if(!check||check.status!=='OPEN') return i.reply({content:'❌ This check is closed.',ephemeral:true});\n        await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()`,[i.guild.id,i.user.id]);\n        return i.reply({content:'🟢 Recorded — you are ACTIVE.',ephemeral:true});\n      }
-      if(i.customId==='goll_ticket_menu') return openTicket(i);
+      if(i.customId==='goll_ticket_menu') return i.reply({content:'Choose a ticket type:',components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('ticket_type').setPlaceholder('🎫 Select a type').addOptions(\n        ['🛠️ General Support','🚨 Report a User','🤝 Partnership','📝 Staff Question','💳 Purchase Support'].map(x=>({label:x.slice(2),value:x}))\n      ))],ephemeral:true});
       if(i.customId==='ticket_claim'){
         if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});
         await q('UPDATE tickets SET claimed_by=$1 WHERE channel_id=$2',[i.user.id,i.channel.id]); return i.reply(`🙋 Ticket claimed by ${i.user}.`);
@@ -268,7 +268,7 @@ client.on('interactionCreate',async i=>{
       ));
     }
 
-    if(i.isModalSubmit()){
+    if(i.isStringSelectMenu() && i.customId==='ticket_type') return openTicket(i,i.values[0]);\n\n    if(i.isModalSubmit()){
       if(i.customId==='loa_modal'){
         const days=Math.max(1,Math.min(14,parseInt(i.fields.getTextInputValue('days'),10)||1)),reason=i.fields.getTextInputValue('reason');
         const until=new Date(Date.now()+days*86400000);
@@ -284,7 +284,7 @@ client.on('interactionCreate',async i=>{
         return i.reply({content:'✅ Application submitted. Staff will review it.',ephemeral:true});
       }
     }
-  }catch(e){
+    if(i.isButton() && (i.customId.startsWith('loa_accept:') || i.customId.startsWith('loa_decline:'))){\n      if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});\n      const [action,userId]=i.customId.split(':'); const approved=action==='loa_accept';\n      if(approved) await q('UPDATE staff_status SET active=false,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,userId]);\n      else await q('UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,userId]);\n      return i.update({content:`${approved?'✅ LOA approved':'❌ LOA declined'} by ${i.user}.`,components:[]});\n    }\n  }catch(e){
     console.error(e); if(!i.replied&&!i.deferred) await i.reply({content:'❌ Something went wrong.',ephemeral:true}).catch(()=>{}); else if(i.deferred) await i.editReply('❌ Something went wrong.').catch(()=>{});
   }
 });

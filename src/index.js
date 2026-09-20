@@ -46,8 +46,22 @@ async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.quer
 const nitro = setupNitro(q, client);
 const economy = setupEconomy(q, client);
 
+async function initInvites(guild){
+  try {
+    const invites=await guild.invites.fetch();
+    for(const inv of invites.values()) await q('INSERT INTO invite_codes(guild_id,code,inviter_id,uses) VALUES($1,$2,$3,$4) ON CONFLICT(guild_id,code) DO UPDATE SET inviter_id=$3,uses=$4',[guild.id,inv.code,inv.inviterId||null,inv.uses||0]);
+  } catch(e){ console.error('Invite init:',e.message); }
+}
 async function dbInit() {
   if (!pool) return;
+  await q(`CREATE TABLE IF NOT EXISTS invite_codes(
+    guild_id TEXT, code TEXT, inviter_id TEXT, uses INT NOT NULL DEFAULT 0,
+    PRIMARY KEY(guild_id,code)
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS invite_uses(
+    guild_id TEXT, user_id TEXT PRIMARY KEY, inviter_id TEXT, code TEXT,
+    joined_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
   await q(`CREATE TABLE IF NOT EXISTS guild_config(
     guild_id TEXT PRIMARY KEY, data JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -244,12 +258,13 @@ async function registerCommands(){
     new SlashCommandBuilder().setName('balance').setDescription('Show balance').addUserOption(o=>o.setName('user').setDescription('Member')),
     new SlashCommandBuilder().setName('daily').setDescription('Claim daily coins'),
     new SlashCommandBuilder().setName('pay').setDescription('Pay coins').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1)),
+    new SlashCommandBuilder().setName('invites').setDescription('Show invite stats').addUserOption(o=>o.setName('user').setDescription('Member')),
     new SlashCommandBuilder().setName('voice').setDescription('Create your temporary voice channel')
   ];
   await client.application.commands.set(commands.map(x=>x.toJSON()));
 }
 
-client.once('ready',async()=>{await dbInit();await registerCommands();console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
+client.once('ready',async()=>{await dbInit();await registerCommands();for(const g of client.guilds.cache.values()) await initInvites(g);console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
   await nitro.recover();
   const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;
   for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}
@@ -257,6 +272,22 @@ client.once('ready',async()=>{await dbInit();await registerCommands();console.lo
   for(const x of checks){const ms=Math.max(1000,new Date(x.deadline).getTime()-Date.now());setTimeout(()=>closeActivity(x.id),ms);}
 });
 
+client.on('guildMemberAdd',async member=>{
+  try{
+    const before=new Map((await q('SELECT code,uses FROM invite_codes WHERE guild_id=$1',[member.guild.id])).rows.map(x=>[x.code,x.uses]));
+    const current=await member.guild.invites.fetch();
+    let used=null;
+    for(const inv of current.values()){const old=before.get(inv.code)||0;if((inv.uses||0)>old){used=inv;break;}}
+    if(used){
+      await q('INSERT INTO invite_uses(guild_id,user_id,inviter_id,code) VALUES($1,$2,$3,$4) ON CONFLICT(user_id) DO NOTHING',[member.guild.id,member.id,used.inviterId,used.code]);
+      await q('UPDATE invite_codes SET uses=$1 WHERE guild_id=$2 AND code=$3',[used.uses||0,member.guild.id,used.code]);
+      const ch=member.guild.channels.cache.find(c=>c.name==='📢・announcements'&&c.type===ChannelType.GuildText);
+      if(ch&&used.inviterId) await ch.send(`🎉 Welcome <@${member.id}>! Invited by <@${used.inviterId}>.`).catch(()=>{});
+    }
+    await initInvites(member.guild);
+  }catch(e){console.error('Invite tracking:',e.message);}
+});
+client.on('guildMemberRemove',async member=>{ /* invite attribution remains stored */ });
 client.on('voiceStateUpdate',async(oldS,newS)=>{
   if(!newS.channelId||newS.channelId===oldS.channelId) return;
   const cfg=(await q('SELECT data FROM guild_config WHERE guild_id=$1',[newS.guild.id])).rows[0]?.data;

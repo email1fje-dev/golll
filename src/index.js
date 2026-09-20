@@ -233,6 +233,8 @@ async function registerCommands(){
     new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('Minutes').setRequired(true).setMinValue(1).setMaxValue(40320)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
     new SlashCommandBuilder().setName('kick').setDescription('Kick a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
     new SlashCommandBuilder().setName('ban').setDescription('Ban a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
+    new SlashCommandBuilder().setName('modlogs').setDescription('Show recent moderation actions').addUserOption(o=>o.setName('user').setDescription('Member')),
+    new SlashCommandBuilder().setName('clear').setDescription('Delete recent messages').addIntegerOption(o=>o.setName('amount').setDescription('1-100').setRequired(true).setMinValue(1).setMaxValue(100)),
     new SlashCommandBuilder().setName('giveaway').setDescription('Create a giveaway').addStringOption(o=>o.setName('prize').setDescription('Prize').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('Duration').setRequired(true).setMinValue(1).setMaxValue(10080)),
     new SlashCommandBuilder().setName('balance').setDescription('Show balance').addUserOption(o=>o.setName('user').setDescription('Member')),
     new SlashCommandBuilder().setName('daily').setDescription('Claim daily coins'),
@@ -267,6 +269,32 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
   if(row&&oldS.channel?.members.size===0){await oldS.channel.delete().catch(()=>{});await q('DELETE FROM temp_voice WHERE channel_id=$1',[oldS.channelId]);}
 });
 
+const spamTracker=new Map();
+
+client.on('messageCreate',async message=>{
+  if(!message.guild||message.author.bot||!message.member) return;
+  const settings=(await q('SELECT * FROM automod_settings WHERE guild_id=$1',[message.guild.id])).rows[0] || {anti_spam:true,anti_links:true,anti_caps:true};
+  if(message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)||isAdmin(message.member)) return;
+
+  let reason=null;
+  if(settings.anti_links && /(https?:\\/\\/|discord\\.gg\\/|www\\.)/i.test(message.content)) reason='Anti-link';
+  const letters=(message.content.match(/[A-Za-z]/g)||[]).length;
+  const caps=(message.content.match(/[A-Z]/g)||[]).length;
+  if(!reason && settings.anti_caps && letters>=8 && caps/letters>=0.8) reason='Anti-caps';
+
+  const now=Date.now(), key=message.guild.id+':'+message.author.id;
+  const arr=(spamTracker.get(key)||[]).filter(t=>now-t<7000); arr.push(now); spamTracker.set(key,arr);
+  if(!reason && settings.anti_spam && arr.length>=6) reason='Anti-spam';
+
+  if(!reason) return;
+  await message.delete().catch(()=>{});
+  await q('INSERT INTO moderation_logs(guild_id,target_id,moderator_id,action,reason,metadata) VALUES($1,$2,$3,$4,$5,$6)',[message.guild.id,message.author.id,client.user.id,'AUTOMOD',reason,JSON.stringify({channel_id:message.channel.id})]);
+  const key2=message.guild.id+':'+message.author.id+':strikes';
+  const strikes=(spamTracker.get(key2)||[]); strikes.push(now); spamTracker.set(key2,strikes.filter(t=>now-t<600000));
+  const n=spamTracker.get(key2).length;
+  if(n>=3){const member=message.member;await member.timeout(5*60*1000,'Goll AutoMod: repeated violations').catch(()=>{});}
+});
+
 client.on('guildMemberAdd',async member=>{
   const r=member.guild.roles.cache.find(x=>x.name==='👤 Member');
   if(r) await member.roles.add(r).catch(()=>{});
@@ -287,12 +315,55 @@ client.on('interactionCreate',async i=>{
       if(['warn','warnings','timeout','kick','ban'].includes(cmd)){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const u=i.options.getUser('user');
-        if(cmd==='warn'){const reason=i.options.getString('reason');await q('INSERT INTO warnings(guild_id,user_id,moderator_id,reason) VALUES($1,$2,$3,$4)',[i.guild.id,u.id,i.user.id,reason]);await u.send(`⚠️ You were warned in ${i.guild.name}: ${reason}`).catch(()=>{});return i.reply(`⚠️ ${u} warned.`);}
-        if(cmd==='warnings'){const rows=(await q('SELECT reason,created_at FROM warnings WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 10',[i.guild.id,u.id])).rows;return i.reply({embeds:[new EmbedBuilder().setTitle('⚠️ Warnings').setDescription(rows.length?rows.map((x,n)=>`${n+1}. ${x.reason}`).join('\\n'):'No warnings.').setColor(0xF1C40F)]});}
+        if(cmd==='modlogs'){
+          const filter=i.options.getUser('user');
+          const rows=(await q(`SELECT action,reason,moderator_id,created_at FROM moderation_logs WHERE guild_id=$1 ${filter?'AND target_id=$2':''} ORDER BY created_at DESC LIMIT 15`,filter?[i.guild.id,filter.id]:[i.guild.id])).rows;
+          return i.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Moderation Logs').setDescription(rows.length?rows.map(x=>`• **${x.action}** — <@${x.target_id}> — ${x.reason||'No reason'} — <t:${Math.floor(new Date(x.created_at).getTime()/1000)}:R>`).join('\\n'):'No moderation actions found.').setColor(0x5865F2)]});
+        }
+        if(cmd==='clear'){
+          if(!i.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return i.reply({content:'❌ Manage Messages is required.',ephemeral:true});
+          const amount=i.options.getInteger('amount'); const deleted=await i.channel.bulkDelete(amount,true);
+          await q('INSERT INTO moderation_logs(guild_id,target_id,moderator_id,action,reason,metadata) VALUES($1,$2,$3,$4,$5,$6)',[i.guild.id,i.user.id,i.user.id,'CLEAR',`Deleted ${deleted.size} messages`,JSON.stringify({amount:deleted.size})]);
+          return i.reply({content:`🧹 Deleted **${deleted.size}** messages.`,ephemeral:true});
+        }
+        if(cmd==='warn'){
+          const reason=i.options.getString('reason');
+          const target=await i.guild.members.fetch(u.id).catch(()=>null);
+          if(!target) return i.reply({content:'❌ Member not found.',ephemeral:true});
+          if(u.id===i.user.id || target.permissions.has(PermissionsBitField.Flags.Administrator)) return i.reply({content:'❌ You cannot moderate yourself or an Administrator.',ephemeral:true});
+          const count=(await q('SELECT COUNT(*)::int AS n FROM warnings WHERE guild_id=$1 AND user_id=$2',[i.guild.id,u.id])).rows[0].n+1;
+          await q('INSERT INTO warnings(guild_id,user_id,moderator_id,reason) VALUES($1,$2,$3,$4)',[i.guild.id,u.id,i.user.id,reason]);
+          await q('INSERT INTO moderation_logs(guild_id,target_id,moderator_id,action,reason,metadata) VALUES($1,$2,$3,$4,$5,$6)',[i.guild.id,u.id,i.user.id,'WARN',reason,JSON.stringify({warning_count:count})]);
+          let escalation='No automatic escalation';
+          if(count===3){await target.timeout(10*60*1000,'Goll: 3 warnings').catch(()=>{});escalation='10 minute timeout';}
+          else if(count===5){await target.timeout(60*60*1000,'Goll: 5 warnings').catch(()=>{});escalation='1 hour timeout';}
+          else if(count===7){await target.kick('Goll: 7 warnings').catch(()=>{});escalation='kick';}
+          else if(count>=10){await target.ban({reason:'Goll: 10+ warnings'}).catch(()=>{});escalation='ban';}
+          await u.send(`⚠️ You were warned in ${i.guild.name}: ${reason}\\nWarning #${count}. ${escalation}`).catch(()=>{});
+          return i.reply(`⚠️ ${u} warned. Warning #${count}. ${escalation}.`);
+        }
+        if(cmd==='warnings'){
+          const rows=(await q('SELECT reason,created_at FROM warnings WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 10',[i.guild.id,u.id])).rows;
+          return i.reply({embeds:[new EmbedBuilder().setTitle('⚠️ Warnings').setDescription(rows.length?rows.map((x,n)=>`${n+1}. ${x.reason} — <t:${Math.floor(new Date(x.created_at).getTime()/1000)}:R>`).join('\\n'):'No warnings.').setColor(0xF1C40F)]});
+        }
         const m=await i.guild.members.fetch(u.id).catch(()=>null); if(!m)return i.reply({content:'Member not found.',ephemeral:true});
-        if(cmd==='timeout'){const min=i.options.getInteger('minutes');await m.timeout(min*60000,i.options.getString('reason')||'Goll moderation');return i.reply(`⏳ ${u} timed out for ${min} minutes.`);}
-        if(cmd==='kick'){await m.kick(i.options.getString('reason')||'Goll moderation');return i.reply(`👢 ${u.tag} kicked.`);}
-        if(cmd==='ban'){await m.ban({reason:i.options.getString('reason')||'Goll moderation'});return i.reply(`🔨 ${u.tag} banned.`);}
+        if(m.id===i.user.id || m.roles.highest.position>=i.member.roles.highest.position) return i.reply({content:'❌ You cannot moderate yourself or a member with an equal/higher role.',ephemeral:true});
+        if(cmd==='timeout'){
+          const min=i.options.getInteger('minutes'), reason=i.options.getString('reason')||'Goll moderation';
+          await m.timeout(min*60000,reason);
+          await q('INSERT INTO moderation_logs(guild_id,target_id,moderator_id,action,reason,metadata) VALUES($1,$2,$3,$4,$5,$6)',[i.guild.id,m.id,i.user.id,'TIMEOUT',reason,JSON.stringify({minutes:min})]);
+          return i.reply(`⏳ ${u} timed out for ${min} minutes.`);
+        }
+        if(cmd==='kick'){
+          const reason=i.options.getString('reason')||'Goll moderation'; await m.kick(reason);
+          await q('INSERT INTO moderation_logs(guild_id,target_id,moderator_id,action,reason) VALUES($1,$2,$3,$4,$5)',[i.guild.id,m.id,i.user.id,'KICK',reason]);
+          return i.reply(`👢 ${u.tag} kicked.`);
+        }
+        if(cmd==='ban'){
+          const reason=i.options.getString('reason')||'Goll moderation'; await m.ban({reason});
+          await q('INSERT INTO moderation_logs(guild_id,target_id,moderator_id,action,reason) VALUES($1,$2,$3,$4,$5)',[i.guild.id,m.id,i.user.id,'BAN',reason]);
+          return i.reply(`🔨 ${u.tag} banned.`);
+        }
       }
       if(cmd==='loa'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});

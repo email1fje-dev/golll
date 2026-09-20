@@ -6,6 +6,7 @@ const {
 const { Pool } = require('pg');
 const { setupNitro } = require('./nitro');
 const { setupEconomy } = require('./economy');
+const { setupVerification } = require('./verification');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -32,7 +33,7 @@ const MANAGED_ROLES = [
   ['🤖 Bots', false], ['👤 Member', false]
 ];
 const CATEGORIES = {
-  '📌 INFORMATION': [['📜・rules',0],['📢・announcements',0],['👋・welcome',0],['ℹ️・about-us',0]],
+  '📌 INFORMATION': [['📜・rules',0],['📢・announcements',0],['👋・welcome',0],['ℹ️・about-us',0],['🔐・verify',0]],
   '💬 COMMUNITY': [['💬・general',0],['🖼️・media',0],['😂・memes',0],['🎮・gaming',0],['📊・levels',0]],
   '🎫 SUPPORT': [['🎫・tickets',0],['📝・apply-for-staff',0],['🤝・partnerships',0]],
   '🎁 GIVEAWAYS': [['🎉・giveaways',0],['💎・nitro-drops',0],['🏆・winners',0]],
@@ -45,6 +46,7 @@ async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.quer
 
 const nitro = setupNitro(q, client);
 const economy = setupEconomy(q, client);
+const verification = setupVerification(q, client);
 
 async function initInvites(guild){
   try {
@@ -61,6 +63,10 @@ async function dbInit() {
   await q(`CREATE TABLE IF NOT EXISTS invite_uses(
     guild_id TEXT, user_id TEXT PRIMARY KEY, inviter_id TEXT, code TEXT,
     joined_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS verification_logs(
+    id BIGSERIAL PRIMARY KEY, guild_id TEXT, user_id TEXT, status TEXT NOT NULL,
+    reason TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
   )`);
   await q(`CREATE TABLE IF NOT EXISTS guild_config(
     guild_id TEXT PRIMARY KEY, data JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -210,6 +216,7 @@ async function setupGuild(guild, repair=false) {
   await sendActivityPanel(guild, repair);
   await sendGiveawayPanel(guild, repair);
   await nitro.ensurePanel(guild, repair);
+  await verification.ensurePanel(guild);
   await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }

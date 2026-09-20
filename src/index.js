@@ -149,19 +149,19 @@ async function registerCommands(){
     new SlashCommandBuilder().setName('kick').setDescription('Kick a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
     new SlashCommandBuilder().setName('ban').setDescription('Ban a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),
     new SlashCommandBuilder().setName('loa').setDescription('Request staff leave of absence'),
-    new SlashCommandBuilder().setName('active').setDescription('Toggle your staff active status'),
+    new SlashCommandBuilder().setName('active').setDescription('Toggle your staff active status'),\n    new SlashCommandBuilder().setName('activity').setDescription('Start a staff activity check').addIntegerOption(o=>o.setName('minutes').setDescription('Response window').setRequired(true).setMinValue(1).setMaxValue(10080)),
     new SlashCommandBuilder().setName('apply').setDescription('Open staff application'),
     new SlashCommandBuilder().setName('giveaway').setDescription('Create a giveaway').addStringOption(o=>o.setName('prize').setDescription('Prize').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('Duration').setRequired(true).setMinValue(1).setMaxValue(10080)),
     new SlashCommandBuilder().setName('balance').setDescription('Show balance').addUserOption(o=>o.setName('user').setDescription('Member')),
     new SlashCommandBuilder().setName('daily').setDescription('Claim daily coins'),
-    new SlashCommandBuilder().setName('pay').setDescription('Pay coins').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1))
+    new SlashCommandBuilder().setName('pay').setDescription('Pay coins').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1)),\n    new SlashCommandBuilder().setName('voice').setDescription('Create your temporary voice channel')
   ];
   await client.application.commands.set(commands.map(x=>x.toJSON()));
 }
 
-client.once('ready',async()=>{await dbInit();await registerCommands();console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);});
+client.once('ready',async()=>{await dbInit();await registerCommands();console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);\n  const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;\n  for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}\n  const checks=(await q("SELECT id,deadline FROM activity_checks WHERE status='OPEN'",[])).rows;\n  for(const x of checks){const ms=Math.max(1000,new Date(x.deadline).getTime()-Date.now());setTimeout(()=>closeActivity(x.id),ms);}\n});
 
-client.on('guildMemberAdd',async member=>{
+client.on('voiceStateUpdate',async(oldS,newS)=>{\n  if(!newS.channelId||newS.channelId===oldS.channelId) return;\n  const cfg=(await q('SELECT data FROM guild_config WHERE guild_id=$1',[newS.guild.id])).rows[0]?.data;\n  const trigger=cfg?.channels?.['🔊 VOICE']?.['🔊・General'];\n  if(newS.channelId!==trigger) return;\n  const existing=(await q('SELECT channel_id FROM temp_voice WHERE guild_id=$1 AND owner_id=$2',[newS.guild.id,newS.member.id])).rows[0];\n  if(existing) return;\n  const c=await newS.guild.channels.create({name:`🔊・${newS.member.displayName}'s Room`.slice(0,100),type:ChannelType.GuildVoice,parent:newS.channel?.parentId});\n  await q('INSERT INTO temp_voice(channel_id,guild_id,owner_id) VALUES($1,$2,$3)',[c.id,newS.guild.id,newS.member.id]);\n  await newS.setChannel(c).catch(()=>{});\n});\nclient.on('voiceStateUpdate',async(oldS,newS)=>{\n  if(!oldS.channelId) return;\n  const row=(await q('SELECT channel_id FROM temp_voice WHERE channel_id=$1',[oldS.channelId])).rows[0];\n  if(row&&oldS.channel?.members.size===0){await oldS.channel.delete().catch(()=>{});await q('DELETE FROM temp_voice WHERE channel_id=$1',[oldS.channelId]);}\n});\n\nclient.on('guildMemberAdd',async member=>{
   const r=member.guild.roles.cache.find(x=>x.name==='👤 Member');
   if(r) await member.roles.add(r).catch(()=>{});
   const w=member.guild.channels.cache.find(c=>c.name==='📢・welcome'&&c.type===ChannelType.GuildText);
@@ -197,7 +197,7 @@ client.on('interactionCreate',async i=>{
           );
         return i.showModal(modal);
       }
-      if(cmd==='active'){
+      if(cmd==='activity'){\n        if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});\n        const minutes=i.options.getInteger('minutes'), deadline=Date.now()+minutes*60000;\n        const ch=i.guild.channels.cache.find(c=>c.name==='📋・activity-check'&&c.type===ChannelType.GuildText);\n        if(!ch) return i.reply({content:'❌ Run /setup first.',ephemeral:true});\n        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('activity_here').setLabel("I'M ACTIVE").setStyle(ButtonStyle.Success));\n        const msg=await ch.send({embeds:[new EmbedBuilder().setTitle('📋 Staff Activity Check').setDescription(`Click I'M ACTIVE before <t:${Math.floor(deadline/1000)}:R>. Approved LOA is exempt.`).setColor(0x57F287)],components:[row]});\n        const r=await q('INSERT INTO activity_checks(guild_id,message_id,channel_id,deadline) VALUES($1,$2,$3,to_timestamp($4/1000.0)) RETURNING id',[i.guild.id,msg.id,ch.id,deadline]);\n        setTimeout(()=>closeActivity(r.rows[0].id),minutes*60000);\n        return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});\n      }\n      if(cmd==='voice') return createTempVoice(i);\n      if(cmd==='active'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const old=(await q('SELECT active FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0]?.active ?? false;
         await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,$3)
@@ -243,7 +243,7 @@ client.on('interactionCreate',async i=>{
       }
     }
 
-    if(i.isButton()){
+    if(i.isButton()){\n      if(i.customId==='activity_here'){\n        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});\n        const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];\n        if(!check||check.status!=='OPEN') return i.reply({content:'❌ This check is closed.',ephemeral:true});\n        await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()`,[i.guild.id,i.user.id]);\n        return i.reply({content:'🟢 Recorded — you are ACTIVE.',ephemeral:true});\n      }
       if(i.customId==='goll_ticket_menu') return openTicket(i);
       if(i.customId==='ticket_claim'){
         if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});
@@ -289,7 +289,7 @@ client.on('interactionCreate',async i=>{
   }
 });
 
-async function finishGiveaway(messageId){
+async function closeActivity(id){\n  const r=(await q("SELECT * FROM activity_checks WHERE id=$1 AND status='OPEN'",[id])).rows[0];\n  if(!r) return;\n  await q("UPDATE activity_checks SET status='CLOSED' WHERE id=$1",[id]);\n  const ch=client.channels.cache.get(r.channel_id);\n  if(ch) await ch.send('📋 Activity check closed. Staff who did not respond should be reviewed by management.');\n}\n\nasync function createTempVoice(i){\n  const existing=(await q('SELECT channel_id FROM temp_voice WHERE guild_id=$1 AND owner_id=$2',[i.guild.id,i.user.id])).rows[0];\n  if(existing) return i.reply({content:`🔊 You already own <#${existing.channel_id}>.`,ephemeral:true});\n  const cat=i.guild.channels.cache.find(c=>c.name==='🔊 VOICE'&&c.type===ChannelType.GuildCategory);\n  const c=await i.guild.channels.create({name:`🔊・${i.user.username}'s Room`.slice(0,100),type:ChannelType.GuildVoice,parent:cat?.id,permissionOverwrites:[{id:i.guild.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect]},{id:i.user.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect,PermissionsBitField.Flags.ManageChannels]}]});\n  await q('INSERT INTO temp_voice(channel_id,guild_id,owner_id) VALUES($1,$2,$3)',[c.id,i.guild.id,i.user.id]);\n  return i.reply({content:`🔊 Created ${c}`,ephemeral:true});\n}\n\nasync function finishGiveaway(messageId){
   const r=(await q('SELECT * FROM giveaways WHERE message_id=$1',[messageId])).rows[0]; if(!r||r.status!=='OPEN')return;
   const p=r.participants||[], channel=client.channels.cache.get(r.channel_id), msg=channel&&await channel.messages.fetch(messageId).catch(()=>null);
   const winner=p.length?p[Math.floor(Math.random()*p.length)]:null;

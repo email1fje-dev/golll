@@ -1,6 +1,6 @@
 const {
   Client, GatewayIntentBits, Partials, PermissionsBitField, ChannelType,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, SlashCommandBuilder
 } = require('discord.js');
 const { Pool } = require('pg');
@@ -90,6 +90,15 @@ async function chan(guild,parent,name,type) {
     guild.channels.create({name,type,parent:parent.id,reason:'Goll setup'});
 }
 
+
+async function sendStaffPanel(guild, force=false) {
+  const ch=guild.channels.cache.find(c=>c.name==='💼・staff-panel'&&c.type===ChannelType.GuildText); if(!ch) return;
+  const exists=(await ch.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👮 Staff Control Panel');
+  if(exists&&!force) return;
+  const rows=[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('staff_active').setLabel("🟢 I'M ACTIVE").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('staff_loa').setLabel('🏖️ Request LOA').setStyle(ButtonStyle.Secondary)),new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('staff_apply_status').setLabel('📋 My Application').setStyle(ButtonStyle.Primary),new ButtonBuilder().setCustomId('staff_refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary))];
+  await ch.send({embeds:[new EmbedBuilder().setTitle('👮 Staff Control Panel').setDescription("Use the buttons below — no slash commands needed.\n\n🟢 I'M ACTIVE — mark yourself active\n🏖️ Request LOA — submit a leave request\n📋 My Application — check application status").setColor(0x5865F2)],components:rows});
+}
+
 async function setupGuild(guild, repair=false) {
   const roles={}; for(const [n] of MANAGED_ROLES) roles[n]=(await role(guild,n)).id;
   const channels={};
@@ -110,7 +119,7 @@ async function setupGuild(guild, repair=false) {
     const exists=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
     if(!exists) await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
   }
-  await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
+  await sendStaffPanel(guild, repair);\n  await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }
 
@@ -243,7 +252,12 @@ client.on('interactionCreate',async i=>{
       }
     }
 
-    if(i.isButton()){\n      if(i.customId==='activity_here'){\n        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});\n        const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];\n        if(!check||check.status!=='OPEN') return i.reply({content:'❌ This check is closed.',ephemeral:true});\n        await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()`,[i.guild.id,i.user.id]);\n        return i.reply({content:'🟢 Recorded — you are ACTIVE.',ephemeral:true});\n      }
+    if(i.isButton()){
+      if(i.customId==='staff_active'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});await q('INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()',[i.guild.id,i.user.id]);return i.reply({content:'🟢 You are marked ACTIVE.',ephemeral:true});}
+      if(i.customId==='staff_loa'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('loa_modal').setTitle('🏖️ Request LOA').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('days').setLabel('Duration (1-14 days)').setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Paragraph).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('extra').setLabel('Extra info (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false))));}
+      if(i.customId==='staff_refresh'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});const s=(await q('SELECT active,loa_until FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0];return i.reply({content:'📊 Status: '+(s?.active?'ACTIVE':'INACTIVE')+(s?.loa_until?' | LOA until '+new Date(s.loa_until).toLocaleDateString() :''),ephemeral:true});}
+      if(i.customId==='staff_apply_status'){const a=(await q('SELECT status FROM applications WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1',[i.guild.id,i.user.id])).rows[0];return i.reply({content:a?'📋 Your latest application: **'+a.status+'**':'📋 You have no application yet.',ephemeral:true});}
+\n      if(i.customId==='activity_here'){\n        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});\n        const check=(await q('SELECT id,status FROM activity_checks WHERE message_id=$1',[i.message.id])).rows[0];\n        if(!check||check.status!=='OPEN') return i.reply({content:'❌ This check is closed.',ephemeral:true});\n        await q(`INSERT INTO staff_status(guild_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=true,updated_at=NOW()`,[i.guild.id,i.user.id]);\n        return i.reply({content:'🟢 Recorded — you are ACTIVE.',ephemeral:true});\n      }
       if(i.customId==='goll_ticket_menu') return i.reply({content:'Choose a ticket type:',components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('ticket_type').setPlaceholder('🎫 Select a type').addOptions(\n        ['🛠️ General Support','🚨 Report a User','🤝 Partnership','📝 Staff Question','💳 Purchase Support'].map(x=>({label:x.slice(2),value:x}))\n      ))],ephemeral:true});
       if(i.customId==='ticket_claim'){
         if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});

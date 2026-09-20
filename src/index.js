@@ -141,7 +141,7 @@ async function openTicket(interaction,type='General Support'){
 
 async function registerCommands(){
   const commands=[
-    new SlashCommandBuilder().setName('setup').setDescription('Create or repair Goll').addSubcommand(s=>s.setName('repair').setDescription('Repair missing managed resources')),
+    new SlashCommandBuilder().setName('setup').setDescription('Create or repair Goll').addBooleanOption(o=>o.setName('repair').setDescription('Only repair missing resources')),
     new SlashCommandBuilder().setName('goll').setDescription('Open Goll control center'),
     new SlashCommandBuilder().setName('warn').setDescription('Warn a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),
     new SlashCommandBuilder().setName('warnings').setDescription('Show member warnings').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
@@ -174,7 +174,7 @@ client.on('interactionCreate',async i=>{
       const cmd=i.commandName;
       if(cmd==='setup'){
         if(!isAdmin(i.member)) return i.reply({content:'❌ Manage Server is required.',ephemeral:true});
-        await i.deferReply({ephemeral:true}); const r=await setupGuild(i.guild,i.options.getSubcommand(false)==='repair');
+        await i.deferReply({ephemeral:true}); const r=await setupGuild(i.guild,i.options.getBoolean('repair')===true);
         return i.editReply(`✅ Goll setup complete — ${Object.keys(r.roles).length} roles, ${Object.keys(r.channels).length} categories.`);
       }
       if(cmd==='goll') return i.reply({ephemeral:true,embeds:[new EmbedBuilder().setTitle('🤖 Goll Control Center').setDescription('⚙️ Setup  •  👮 Staff  •  🎫 Tickets  •  🛡️ Moderation  •  🎁 Giveaways  •  💰 Economy  •  🔊 Voice').setColor(0x5865F2)]});

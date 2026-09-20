@@ -5,6 +5,7 @@ const {
 } = require('discord.js');
 const { Pool } = require('pg');
 const { setupNitro } = require('./nitro');
+const { setupEconomy } = require('./economy');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -43,6 +44,7 @@ const CATEGORIES = {
 async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.query(sql, params); }
 
 const nitro = setupNitro(q, client);
+const economy = setupEconomy(q, client);
 
 async function dbInit() {
   if (!pool) return;

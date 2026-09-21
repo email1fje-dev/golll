@@ -13,6 +13,9 @@ const { setupDashboard } = require('./dashboard');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
 const TTS_TOKEN = process.env.TTS_TOKEN || '';
+const TTS_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
+const { Readable } = require('stream');
 
 const client = new Client({
   intents: [
@@ -45,6 +48,23 @@ const CATEGORIES = {
 };
 
 async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.query(sql, params); }
+async function playWelcomeTTS(member){
+  if(!TTS_TOKEN || !member.voice?.channel) return;
+  const response=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+TTS_VOICE_ID+'?output_format=mp3_44100_128',{
+    method:'POST',
+    headers:{'xi-api-key':TTS_TOKEN,'Content-Type':'application/json'},
+    body:JSON.stringify({text:'Welcome to the server, '+member.displayName+'!',model_id:'eleven_multilingual_v2'})
+  });
+  if(!response.ok) throw new Error('ElevenLabs TTS '+response.status+' '+(await response.text()).slice(0,200));
+  const audio=Buffer.from(await response.arrayBuffer());
+  const connection=joinVoiceChannel({channelId:member.voice.channel.id,guildId:member.guild.id,adapterCreator:member.guild.voiceAdapterCreator,selfDeaf:true});
+  const player=createAudioPlayer({behaviors:{noSubscriber:NoSubscriberBehavior.Stop}});
+  connection.subscribe(player);
+  player.play(createAudioResource(Readable.from(audio)));
+  player.once(AudioPlayerStatus.Idle,()=>connection.destroy());
+  player.on('error',()=>connection.destroy());
+}
+
 
 const nitro = setupNitro(q, client);
 const economy = setupEconomy(q, client);
@@ -355,10 +375,24 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
   await newS.setChannel(c).catch(()=>{});
 });
 client.on('voiceStateUpdate',async(oldS,newS)=>{
-  if(!oldS.channelId) return;
-  const row=(await q('SELECT channel_id FROM temp_voice WHERE channel_id=$1',[oldS.channelId])).rows[0];
-  if(row&&oldS.channel?.members.size===0){await oldS.channel.delete().catch(()=>{});await q('DELETE FROM temp_voice WHERE channel_id=$1',[oldS.channelId]);}
-});
+  try{
+    if(!oldS.channelId && newS.channelId && newS.channel.name==='👋・Welcome' && !newS.member.user.bot){
+      await playWelcomeTTS(newS.member).catch(e=>console.error('Welcome TTS:',e.message));
+    }
+    if(!oldS.channelId && newS.channelId){
+      const cfg=(await q('SELECT data FROM guild_config WHERE guild_id=$1',[newS.guild.id])).rows[0]?.data;
+      const trigger=cfg?.channels?.['🔊 VOICE']?.['🔊・General'];
+      if(trigger && newS.channelId===trigger){
+        const existing=(await q('SELECT channel_id FROM temp_voice WHERE guild_id=$1 AND owner_id=$2',[newS.guild.id,newS.member.id])).rows[0];
+        if(!existing){
+          const c=await newS.guild.channels.create({name:'🔊・'+newS.member.displayName+"'s Room".slice(0,100),type:ChannelType.GuildVoice,parent:newS.channel.parentId});
+          await q('INSERT INTO temp_voice(channel_id,guild_id,owner_id) VALUES($1,$2,$3)',[c.id,newS.guild.id,newS.member.id]);
+          await newS.member.voice.setChannel(c).catch(()=>{});
+        }
+      }
+    }
+  }catch(e){console.error('Voice state:',e.message);}
+});;
 
 const spamTracker=new Map();
 

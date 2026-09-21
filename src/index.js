@@ -16,6 +16,8 @@ const TTS_TOKEN = process.env.TTS_TOKEN || '';
 const TTS_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 const { Readable } = require('stream');
+const ffmpegPath = require('ffmpeg-static');
+if (ffmpegPath) process.env.FFMPEG_PATH = ffmpegPath;
 
 const client = new Client({
   intents: [

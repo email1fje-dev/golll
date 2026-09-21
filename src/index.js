@@ -402,7 +402,7 @@ client.on('messageCreate',async message=>{
   if(message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)||isAdmin(message.member)) return;
 
   let reason=null;
-  if(settings.anti_links && /(https?:\\/\\/|discord\\.gg\\/|www\\.)/i.test(message.content)) reason='Anti-link';
+  if(settings.anti_links && /(https?:\/\/|discord\.gg\/|www\.)/i.test(message.content)) reason='Anti-link';
   const letters=(message.content.match(/[A-Za-z]/g)||[]).length;
   const caps=(message.content.match(/[A-Z]/g)||[]).length;
   if(!reason && settings.anti_caps && letters>=8 && caps/letters>=0.8) reason='Anti-caps';
@@ -798,10 +798,3 @@ async function createTempVoice(i){
 async function finishGiveaway(messageId){
   const r=(await q('SELECT * FROM giveaways WHERE message_id=$1',[messageId])).rows[0]; if(!r||r.status!=='OPEN')return;
   const p=r.participants||[], channel=client.channels.cache.get(r.channel_id), msg=channel&&await channel.messages.fetch(messageId).catch(()=>null);
-  const winner=p.length?p[Math.floor(Math.random()*p.length)]:null;
-  await q('UPDATE giveaways SET status=$1,winner_id=$2 WHERE message_id=$3',['CLAIMED',winner,messageId]);
-  if(msg) await msg.edit({components:[],embeds:[EmbedBuilder.from(msg.embeds[0]).setDescription(`**Prize:** ${r.prize}\\n**Winner:** ${winner?`<@${winner}>`:'No eligible entries.'}`).setColor(0x57F287)]}).catch(()=>{});
-  if(channel) await channel.send(winner?`🎉 Congratulations <@${winner}>! You won **${r.prize}**!`:'⏰ Giveaway expired with no entries.');
-}
-
-client.login(DISCORD_TOKEN);

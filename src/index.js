@@ -239,6 +239,25 @@ async function chan(guild,parent,name,type) {
 }
 
 
+async function lockNewMember(member) {
+  // Explicit user deny is the final onboarding gate. This prevents inherited
+  // category/role overwrites from accidentally exposing private channels.
+  for (const ch of member.guild.channels.cache.values()) {
+    if (ch.type === ChannelType.GuildCategory) continue;
+    if (ch.name === '👋・Welcome' && ch.type === ChannelType.GuildVoice) continue;
+    await ch.permissionOverwrites.edit(member.id, { ViewChannel: false }).catch(()=>{});
+  }
+}
+
+async function unlockMember(member) {
+  // Remove the temporary per-user locks. Normal role/category permissions
+  // take over after 👤 Member is granted.
+  for (const ch of member.guild.channels.cache.values()) {
+    if (ch.type === ChannelType.GuildCategory) continue;
+    await ch.permissionOverwrites.delete(member.id).catch(()=>{});
+  }
+}
+
 async function seedChannelContent(guild, force=false) {
   const cards = [
     ['📜・rules','📜 Server Rules','Please read and follow the server rules before chatting.\n\n• Be respectful.\n• No spam or harmful content.\n• Follow Discord Terms of Service.\n• Staff decisions and support requests should stay respectful.'],
@@ -488,6 +507,9 @@ client.once('ready',async()=>{await dbInit();await registerCommands();for(const 
 
 client.on('guildMemberAdd',async member=>{
   try{
+    const memberRole=member.guild.roles.cache.find(x=>x.name==='👤 Member');
+    if(memberRole && member.roles.cache.has(memberRole.id)) await member.roles.remove(memberRole,'Goll onboarding gate').catch(()=>{});
+    await lockNewMember(member);
     const before=new Map((await q('SELECT code,uses FROM invite_codes WHERE guild_id=$1',[member.guild.id])).rows.map(x=>[x.code,x.uses]));
     const current=await member.guild.invites.fetch();
     let used=null;
@@ -526,6 +548,7 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
         const played = await playWelcomeTTS(newS.member);
         if (played && memberRole && newS.member.voice?.channel?.id === newS.channelId && !newS.member.roles.cache.has(memberRole.id)) {
           await newS.member.roles.add(memberRole, 'Goll Welcome voice onboarding complete');
+          await unlockMember(newS.member);
         }
       } catch(e) {
         console.error('Welcome TTS:', e.message);
@@ -573,11 +596,6 @@ client.on('messageCreate',async message=>{
 });
 
 client.on('guildMemberAdd',async member=>{
-  // IMPORTANT: never give 👤 Member on join. The Welcome voice is the onboarding gate.
-  const r=member.guild.roles.cache.find(x=>x.name==='👤 Member');
-  if(r && member.roles.cache.has(r.id)) {
-    await member.roles.remove(r, 'Goll onboarding: Member role is granted only after Welcome voice').catch(()=>{});
-  }
   const w=member.guild.channels.cache.find(c=>c.name==='📢・welcome'&&c.type===ChannelType.GuildText);
   if(w) await w.send(`👋 Welcome ${member}!`).catch(()=>{});
 });

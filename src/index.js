@@ -332,6 +332,28 @@ async function sendGiveawayPanel(guild, force=false) {
 
 async function setupGuild(guild, repair=false) {
   const roles={}; for(const [n] of MANAGED_ROLES) roles[n]=(await role(guild,n)).id;
+
+  // Goll owns these resources. If an earlier setup/redeploy created duplicates,
+  // keep one copy and remove the extras so setup is idempotent.
+  for (const [catName, items] of Object.entries(CATEGORIES)) {
+    const cats = guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory && c.name === catName);
+    if (cats.size > 1) {
+      const keep = [...cats.values()].sort((a,b) => b.children.cache.size - a.children.cache.size || a.id.localeCompare(b.id))[0];
+      for (const dup of cats.values()) {
+        if (dup.id !== keep.id) await dup.delete('Goll setup: remove duplicate category').catch(()=>{});
+      }
+    }
+    const cat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === catName);
+    if (!cat) continue;
+    for (const [name,type] of items) {
+      const matches = guild.channels.cache.filter(c => c.parentId === cat.id && c.name === name && c.type === type);
+      if (matches.size > 1) {
+        const keep = [...matches.values()].sort((a,b)=>a.id.localeCompare(b.id))[0];
+        for (const dup of matches.values()) if (dup.id !== keep.id) await dup.delete('Goll setup: remove duplicate channel').catch(()=>{});
+      }
+    }
+  }
+
   const channels={};
   for(const [catName,items] of Object.entries(CATEGORIES)){
     const cat=await category(guild,catName); channels[catName]={};

@@ -55,16 +55,9 @@ const CATEGORIES = {
 
 async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.query(sql, params); }
 async function playWelcomeTTS(member){
-  if(!TTS_TOKEN){
-    console.warn('Welcome TTS: TTS_TOKEN is not configured.');
-    return;
-  }
-  if(!member.voice?.channel){
-    console.warn('Welcome TTS: member is no longer in a voice channel.');
-    return;
-  }
+  if(!TTS_TOKEN) return false;
+  if(!member.voice?.channel) return false;
 
-  console.log('Welcome TTS: generating audio for', member.user.tag);
   const response=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+TTS_VOICE_ID+'?output_format=mp3_44100_128',{
     method:'POST',
     headers:{'xi-api-key':TTS_TOKEN,'Content-Type':'application/json'},
@@ -74,30 +67,23 @@ async function playWelcomeTTS(member){
 
   const audio=Buffer.from(await response.arrayBuffer());
   if(!audio.length) throw new Error('ElevenLabs returned an empty audio file.');
-  console.log('Welcome TTS: audio received', audio.length, 'bytes');
 
   const channel=member.voice.channel;
-  const connection=joinVoiceChannel({
-    channelId:channel.id,
-    guildId:member.guild.id,
-    adapterCreator:member.guild.voiceAdapterCreator,
-    selfDeaf:false,
-    selfMute:false
-  });
-
+  const connection=joinVoiceChannel({channelId:channel.id,guildId:member.guild.id,adapterCreator:member.guild.voiceAdapterCreator,selfDeaf:false,selfMute:false});
   await entersState(connection, VoiceConnectionStatus.Ready, 15000);
-  console.log('Welcome TTS: voice connection ready');
 
   const player=createAudioPlayer({behaviors:{noSubscriber:NoSubscriberBehavior.Stop}});
   connection.subscribe(player);
-  const resource=createAudioResource(Readable.from(audio), {inputType: 'arbitrary'});
-  player.play(resource);
 
-  player.once(AudioPlayerStatus.Playing,()=>console.log('Welcome TTS: playback started'));
-  player.once(AudioPlayerStatus.Idle,()=>{console.log('Welcome TTS: playback finished'); connection.destroy();});
-  player.on('error',err=>{console.error('Welcome TTS player:',err.message); connection.destroy();});
+  return await new Promise((resolve,reject)=>{
+    let done=false;
+    const finish=ok=>{if(done)return;done=true;connection.destroy();resolve(ok);};
+    player.once(AudioPlayerStatus.Playing,()=>console.log('Welcome TTS: playback started'));
+    player.once(AudioPlayerStatus.Idle,()=>{console.log('Welcome TTS: playback finished');finish(true);});
+    player.once('error',err=>{connection.destroy();if(!done){done=true;reject(err);}});
+    player.play(createAudioResource(Readable.from(audio),{inputType:'arbitrary'}));
+  });
 }
-
 
 const nitro = setupNitro(q, client);
 const economy = setupEconomy(q, client);
@@ -351,49 +337,38 @@ async function setupGuild(guild, repair=false) {
     const cat=await category(guild,catName); channels[catName]={};
     for(const [n,t] of items) channels[catName][n]=(await chan(guild,cat,n,t)).id;
   }
-  // Lock the server by default. New members without 👤 Member only get Welcome voice.
+  // New members are locked down until Welcome voice onboarding is complete.
   const everyone = guild.roles.everyone;
   const memberRole = guild.roles.cache.get(roles['👤 Member']);
   const staffRoleNames = ['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'];
 
-  for (const [catName] of Object.entries(CATEGORIES)) {
+  for (const [catName] of Object.keys(CATEGORIES)) {
     const cat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === catName);
     if (!cat) continue;
     const staffOnly = catName === '👮 STAFF' || catName === '🔐 STAFF LOGS';
 
     await cat.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
-    if (memberRole && !staffOnly) {
-      await cat.permissionOverwrites.edit(memberRole, { ViewChannel: true }).catch(()=>{});
-    }
+    if (memberRole) await cat.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
 
     if (staffOnly) {
       for (const roleName of staffRoleNames) {
         const r = guild.roles.cache.find(x => x.name === roleName);
-        if (r) await cat.permissionOverwrites.edit(r, { ViewChannel: true }).catch(()=>{});
-      }
-      if (catName === '🔐 STAFF LOGS') {
-        for (const roleName of ['🎫 Support','📝 Trial Staff']) {
-          const r = guild.roles.cache.find(x => x.name === roleName);
-          if (r) await cat.permissionOverwrites.edit(r, { ViewChannel: false }).catch(()=>{});
-        }
+        if (r) await cat.permissionOverwrites.edit(r, { ViewChannel: roleName !== '🎫 Support' && roleName !== '📝 Trial Staff' || catName !== '🔐 STAFF LOGS' }).catch(()=>{});
       }
     }
 
     for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
       await ch.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
-      if (memberRole && !staffOnly) {
-        await ch.permissionOverwrites.edit(memberRole, { ViewChannel: true }).catch(()=>{});
-      }
+      if (memberRole) await ch.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
       if (staffOnly) {
         for (const roleName of staffRoleNames) {
           const r = guild.roles.cache.find(x => x.name === roleName);
-          if (r) await ch.permissionOverwrites.edit(r, { ViewChannel: roleName !== '🎫 Support' && roleName !== '📝 Trial Staff' }).catch(()=>{});
+          if (r) await ch.permissionOverwrites.edit(r, { ViewChannel: roleName !== '🎫 Support' && roleName !== '📝 Trial Staff' || catName !== '🔐 STAFF LOGS' }).catch(()=>{});
         }
       }
     }
   }
 
-  // Welcome voice is the only visible/connectable channel for unverified users.
   const welcomeVoice = guild.channels.cache.find(c => c.name === '👋・Welcome' && c.type === ChannelType.GuildVoice);
   if (welcomeVoice) {
     await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});
@@ -519,17 +494,20 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
 client.on('voiceStateUpdate',async(oldS,newS)=>{
   try{
     if(!oldS.channelId && newS.channelId && newS.channel.name==='👋・Welcome' && !newS.member.user.bot){
-      // Welcome voice is the onboarding gate. Eligible accounts are unlocked automatically.
       const memberRole = newS.guild.roles.cache.find(r => r.name === '👤 Member');
-      const accountAge = Date.now() - newS.member.user.createdTimestamp;
-      if (memberRole && accountAge >= 24 * 60 * 60 * 1000 && !newS.member.roles.cache.has(memberRole.id)) {
-        await newS.member.roles.add(memberRole, 'Goll Welcome voice unlock').catch(e => console.error('Welcome unlock:', e.message));
-      }
       if (pool) {
         const seen = await q('INSERT INTO welcome_tts_seen(guild_id,user_id) VALUES($1,$2) ON CONFLICT(guild_id,user_id) DO NOTHING RETURNING user_id',[newS.guild.id,newS.member.id]);
         if (!seen.rows.length) return;
       }
-      await playWelcomeTTS(newS.member).catch(e=>console.error('Welcome TTS:',e.message));
+      try {
+        // IMPORTANT: do not unlock until the Welcome audio has finished.
+        const played = await playWelcomeTTS(newS.member);
+        if (played && memberRole && newS.member.voice?.channel?.id === newS.channelId && !newS.member.roles.cache.has(memberRole.id)) {
+          await newS.member.roles.add(memberRole, 'Goll Welcome voice onboarding complete');
+        }
+      } catch(e) {
+        console.error('Welcome TTS:', e.message);
+      }
     }
     if(!oldS.channelId && newS.channelId){
       const cfg=(await q('SELECT data FROM guild_config WHERE guild_id=$1',[newS.guild.id])).rows[0]?.data;

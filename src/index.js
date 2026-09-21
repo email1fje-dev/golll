@@ -351,25 +351,53 @@ async function setupGuild(guild, repair=false) {
     const cat=await category(guild,catName); channels[catName]={};
     for(const [n,t] of items) channels[catName][n]=(await chan(guild,cat,n,t)).id;
   }
-  const memberRole=guild.roles.cache.get(roles['👤 Member']);
-  if(memberRole) for(const c of guild.channels.cache.values()){
-    if(c.isTextBased()&&!c.isThread()) await c.permissionOverwrites.edit(memberRole,{ViewChannel:true}).catch(()=>{});
+  // Lock the server by default. New members without 👤 Member only get Welcome voice.
+  const everyone = guild.roles.everyone;
+  const memberRole = guild.roles.cache.get(roles['👤 Member']);
+  const staffRoleNames = ['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'];
+
+  for (const [catName] of Object.entries(CATEGORIES)) {
+    const cat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === catName);
+    if (!cat) continue;
+    const staffOnly = catName === '👮 STAFF' || catName === '🔐 STAFF LOGS';
+
+    await cat.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
+    if (memberRole && !staffOnly) {
+      await cat.permissionOverwrites.edit(memberRole, { ViewChannel: true }).catch(()=>{});
+    }
+
+    if (staffOnly) {
+      for (const roleName of staffRoleNames) {
+        const r = guild.roles.cache.find(x => x.name === roleName);
+        if (r) await cat.permissionOverwrites.edit(r, { ViewChannel: true }).catch(()=>{});
+      }
+      if (catName === '🔐 STAFF LOGS') {
+        for (const roleName of ['🎫 Support','📝 Trial Staff']) {
+          const r = guild.roles.cache.find(x => x.name === roleName);
+          if (r) await cat.permissionOverwrites.edit(r, { ViewChannel: false }).catch(()=>{});
+        }
+      }
+    }
+
+    for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
+      await ch.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
+      if (memberRole && !staffOnly) {
+        await ch.permissionOverwrites.edit(memberRole, { ViewChannel: true }).catch(()=>{});
+      }
+      if (staffOnly) {
+        for (const roleName of staffRoleNames) {
+          const r = guild.roles.cache.find(x => x.name === roleName);
+          if (r) await ch.permissionOverwrites.edit(r, { ViewChannel: roleName !== '🎫 Support' && roleName !== '📝 Trial Staff' }).catch(()=>{});
+        }
+      }
+    }
   }
 
-  // Welcome voice is for members; @everyone should not see it before becoming a member.
-  const welcomeVoice = guild.channels.cache.find(
-    c => c.name === '👋・Welcome' && c.type === ChannelType.GuildVoice
-  );
-  const memberRoleForWelcome = guild.roles.cache.get(roles['👤 Member']);
-  if (welcomeVoice && memberRoleForWelcome) {
-    await welcomeVoice.permissionOverwrites.edit(guild.roles.everyone, {
-      ViewChannel: false,
-      Connect: false
-    }).catch(() => {});
-    await welcomeVoice.permissionOverwrites.edit(memberRoleForWelcome, {
-      ViewChannel: true,
-      Connect: true
-    }).catch(() => {});
+  // Welcome voice is the only visible/connectable channel for unverified users.
+  const welcomeVoice = guild.channels.cache.find(c => c.name === '👋・Welcome' && c.type === ChannelType.GuildVoice);
+  if (welcomeVoice) {
+    await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});
+    if (memberRole) await welcomeVoice.permissionOverwrites.edit(memberRole, { ViewChannel: true, Connect: true }).catch(()=>{});
   }
   const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
   if(welcome && welcome.isTextBased()){
@@ -491,6 +519,12 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
 client.on('voiceStateUpdate',async(oldS,newS)=>{
   try{
     if(!oldS.channelId && newS.channelId && newS.channel.name==='👋・Welcome' && !newS.member.user.bot){
+      // Welcome voice is the onboarding gate. Eligible accounts are unlocked automatically.
+      const memberRole = newS.guild.roles.cache.find(r => r.name === '👤 Member');
+      const accountAge = Date.now() - newS.member.user.createdTimestamp;
+      if (memberRole && accountAge >= 24 * 60 * 60 * 1000 && !newS.member.roles.cache.has(memberRole.id)) {
+        await newS.member.roles.add(memberRole, 'Goll Welcome voice unlock').catch(e => console.error('Welcome unlock:', e.message));
+      }
       if (pool) {
         const seen = await q('INSERT INTO welcome_tts_seen(guild_id,user_id) VALUES($1,$2) ON CONFLICT(guild_id,user_id) DO NOTHING RETURNING user_id',[newS.guild.id,newS.member.id]);
         if (!seen.rows.length) return;

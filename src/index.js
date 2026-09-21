@@ -8,6 +8,7 @@ const { setupNitro } = require('./nitro');
 const { setupEconomy } = require('./economy');
 const { setupVerification } = require('./verification');
 const { setupAutomod } = require('./automod');
+const { setupDashboard } = require('./dashboard');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -38,7 +39,7 @@ const CATEGORIES = {
   '💬 COMMUNITY': [['💬・general',0],['🖼️・media',0],['😂・memes',0],['🎮・gaming',0],['📊・levels',0]],
   '🎫 SUPPORT': [['🎫・tickets',0],['📝・apply-for-staff',0],['🤝・partnerships',0]],
   '🎁 GIVEAWAYS': [['🎉・giveaways',0],['💎・nitro-drops',0],['🏆・winners',0]],
-  '👮 STAFF': [['📋・activity-check',0],['🏖️・request-loa',0],['💼・staff-panel',0],['📚・staff-info',0],['🛡️・automod',0]],
+  '👮 STAFF': [['📋・activity-check',0],['🏖️・request-loa',0],['💼・staff-panel',0],['📚・staff-info',0],['🛡️・automod',0],['📊・dashboard',0]],
   '🔐 STAFF LOGS': [['📋・application-logs',0],['🎫・ticket-logs',0],['🏖️・loa-logs',0],['⚙️・updates-logs',0]],
   '🔊 VOICE': [['👋・Welcome',2],['🔊・General',2],['🎮・Gaming',2],['🔒・Private VC',2]]
 };
@@ -49,6 +50,7 @@ const nitro = setupNitro(q, client);
 const economy = setupEconomy(q, client);
 const verification = setupVerification(q, client);
 const automod = setupAutomod(q, client);
+const dashboard = setupDashboard(q, client);
 
 async function initInvites(guild){
   try {
@@ -227,6 +229,7 @@ async function setupGuild(guild, repair=false) {
   await nitro.ensurePanel(guild, repair);
   await verification.ensurePanel(guild);
   await automod.ensurePanel(guild, repair);
+  await dashboard.ensurePanel(guild, repair);
   await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }

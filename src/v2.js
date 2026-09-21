@@ -126,8 +126,7 @@ async function ensurePanel(guild,q,repair=false){
     const ch=guild.channels.cache.find(c=>c.name===name&&c.type===ChannelType.GuildText); if(!ch) continue;
     const msgs=await ch.messages.fetch({limit:50}).catch(()=>new Map());
     const old=msgs.find(m=>m.author.id===guild.client.user.id&&m.embeds.some(e=>e.title===title));
-    if(old&&!repair) continue;
-    if(old&&repair) await old.delete().catch(()=>{});
+    if(old) { if(repair) await old.delete().catch(()=>{}); else continue; }
   }
   const t=guild.channels.cache.find(c=>c.name==='🎫・tickets'&&c.type===ChannelType.GuildText);
   if(t) await t.send({embeds:[new EmbedBuilder().setTitle('🎫 Support Tickets V2').setDescription('A complete ticket workflow with categories, claiming, routing, priority, transfer, member access, SLA, transcripts, close reasons and ratings.').setColor(0x5865F2)],components:[row(btn('v2_ticket_open','🎫 Open Ticket',ButtonStyle.Primary))]}).catch(()=>{});
@@ -221,6 +220,44 @@ async function setup(client,q){
           await i.channel.permissionOverwrites.delete(target.id).catch(()=>{}); await q('DELETE FROM ticket_v2_members WHERE channel_id=$1 AND user_id=$2',[i.channel.id,target.id]); return i.reply({content:'➖ Removed '+target+'.',ephemeral:true});
         }
       }
+      if(i.isButton()&&i.customId==='v2_gw_enter'){
+        const r=(await q('SELECT * FROM giveaway_v2 WHERE message_id=$1',[i.message.id])).rows[0];
+        if(!r||r.status!=='OPEN') return i.reply({content:'❌ Giveaway is closed.',ephemeral:true});
+        if(r.required_role_id&&!i.member.roles.cache.has(r.required_role_id)) return i.reply({content:'❌ You do not have the required role.',ephemeral:true});
+        if(r.min_account_days&&((Date.now()-i.user.createdTimestamp)/86400000)<r.min_account_days) return i.reply({content:'❌ Your account is too new for this giveaway.',ephemeral:true});
+        if(r.min_level){
+          const level=(await q('SELECT level FROM economy WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0]?.level||0;
+          if(level<r.min_level) return i.reply({content:'❌ You do not meet the minimum level.',ephemeral:true});
+        }
+        const entries=Array.isArray(r.entries)?r.entries:[];
+        if(entries.includes(i.user.id)) return i.reply({content:'ℹ️ You are already entered.',ephemeral:true});
+        entries.push(i.user.id);
+        await q('UPDATE giveaway_v2 SET entries=$1 WHERE message_id=$2',[JSON.stringify(entries),i.message.id]);
+        return i.reply({content:'🎉 You are entered!',ephemeral:true});
+      }
+      if(i.isButton()&&(i.customId.startsWith('v2_loa_approve:')||i.customId.startsWith('v2_loa_deny:'))){
+        if(!admin(i.member)) return i.reply({content:'❌ Management only.',ephemeral:true});
+        const [action,id]=i.customId.split(':');
+        const r=(await q('SELECT * FROM loa_v2 WHERE id=$1 AND guild_id=$2',[id,i.guild.id])).rows[0];
+        if(!r||r.status!=='PENDING') return i.reply({content:'❌ This LOA request is no longer pending.',ephemeral:true});
+        const approved=action==='v2_loa_approve';
+        await q('UPDATE loa_v2 SET status=$1,reviewer_id=$2,starts_at=CASE WHEN $1=\'APPROVED\' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$3',[approved?'APPROVED':'DENIED',i.user.id,id]);
+        if(approved) await q('INSERT INTO staff_status(guild_id,user_id,active,loa_until,loa_reason) VALUES($1,$2,false,$3,$4) ON CONFLICT(guild_id,user_id) DO UPDATE SET active=false,loa_until=$3,loa_reason=$4,updated_at=NOW()',[i.guild.id,r.user_id,r.ends_at,r.reason]);
+        await q('INSERT INTO staff_v2_history(guild_id,user_id,actor_id,action,details) VALUES($1,$2,$3,$4,$5)',[i.guild.id,r.user_id,i.user.id,approved?'LOA_APPROVED':'LOA_DENIED','Request #'+id]);
+        const user=await i.client.users.fetch(r.user_id).catch(()=>null);
+        if(user) await user.send('🏖️ Your LOA request #'+id+' was **'+(approved?'approved':'denied')+'** by management.').catch(()=>{});
+        return i.update({content:(approved?'✅ LOA approved.':'❌ LOA denied.'),components:[],embeds:[]});
+      }
+      if(i.isButton()&&i.customId==='v2_ticket_reopen'){
+        if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+        const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0];
+        if(!t||t.status!=='CLOSED') return i.reply({content:'❌ Ticket is not closed.',ephemeral:true});
+        await q("UPDATE ticket_v2 SET status='REOPENED',closed_at=NULL,close_reason=NULL WHERE channel_id=$1",[i.channel.id]);
+        await i.channel.permissionOverwrites.edit(t.opener_id,{SendMessages:true}).catch(()=>{});
+        await i.channel.setName(i.channel.name.replace(/^closed-/,'').slice(0,100)).catch(()=>{});
+        await logTicket(q,i.guild,i.channel.id,i.user.id,'REOPENED');
+        return i.reply('🔓 Ticket reopened.');
+      }
       if(i.isModalSubmit()){
         if(i.customId==='v2_priority_modal'){
           if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
@@ -276,6 +313,14 @@ async function setup(client,q){
           await q('UPDATE application_v2 SET status=\'DENIED\',reviewer_id=$1,decision_reason=$2,updated_at=NOW() WHERE id=$3',[i.user.id,reason,id]);
           return i.reply({content:'❌ Application #'+id+' denied.',ephemeral:true});
         }
+        if(i.customId==='v2_rate_modal'){
+          const t=(await q('SELECT opener_id FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0];
+          const rating=Math.max(1,Math.min(5,parseInt(i.fields.getTextInputValue('rating'),10)||1));
+          const comment=i.fields.getTextInputValue('comment').trim();
+          if(!t||i.user.id!==t.opener_id) return i.reply({content:'❌ Only the requester can rate this ticket.',ephemeral:true});
+          await q('INSERT INTO ticket_v2_ratings(channel_id,guild_id,user_id,rating,comment) VALUES($1,$2,$3,$4,$5) ON CONFLICT(channel_id) DO UPDATE SET rating=$4,comment=$5',[i.channel.id,i.guild.id,i.user.id,rating,comment]);
+          return i.reply({content:'⭐ Thanks! Your support rating was recorded.',ephemeral:true});
+        }
         if(i.customId==='v2_gw_modal'){
           if(!admin(i.member)) return i.reply({content:'❌ Management only.',ephemeral:true});
           const prize=i.fields.getTextInputValue('prize').trim(),minutes=Math.max(1,Math.min(10080,parseInt(i.fields.getTextInputValue('minutes'),10)||1)),winners=Math.max(1,Math.min(10,parseInt(i.fields.getTextInputValue('winners'),10)||1)),roleId=i.fields.getTextInputValue('role').trim()||null,level=Math.max(0,parseInt(i.fields.getTextInputValue('level'),10)||0),account=Math.max(0,parseInt(i.fields.getTextInputValue('account'),10)||0),end=new Date(Date.now()+minutes*60000);
@@ -291,7 +336,29 @@ async function setup(client,q){
           return i.showModal(modal('v2_rate_modal','⭐ Rate Support',[{id:'rating',label:'Rating 1-5',max:1},{id:'comment',label:'Comment (optional)',long:true,required:false,max:500}]));
         }
       }
-      if(i.isUserSelectMenu()){}
+      if(i.isUserSelectMenu()){
+        if(i.customId==='v2_ticket_transfer_user'){
+          if(!admin(i.member)) return i.reply({content:'❌ Management only.',ephemeral:true});
+          const target=await i.guild.members.fetch(i.values[0]).catch(()=>null);
+          if(!target||!staff(target)) return i.reply({content:'❌ Select a staff member.',ephemeral:true});
+          await q('UPDATE ticket_v2 SET claimed_by=$1 WHERE channel_id=$2',[target.id,i.channel.id]);
+          await logTicket(q,i.guild,i.channel.id,i.user.id,'TRANSFERRED','To '+target.user.tag);
+          return i.reply({content:'🔄 Ticket transferred to '+target+'.',ephemeral:true});
+        }
+        if(i.customId==='v2_ticket_add_user'||i.customId==='v2_ticket_remove_user'){
+          if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+          const target=await i.guild.members.fetch(i.values[0]).catch(()=>null);
+          if(!target) return i.reply({content:'❌ Member not found.',ephemeral:true});
+          if(i.customId==='v2_ticket_add_user'){
+            await i.channel.permissionOverwrites.edit(target.id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true});
+            await q('INSERT INTO ticket_v2_members(channel_id,user_id,added_by) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[i.channel.id,target.id,i.user.id]);
+            return i.reply({content:'➕ Added '+target+'.',ephemeral:true});
+          }
+          await i.channel.permissionOverwrites.delete(target.id).catch(()=>{});
+          await q('DELETE FROM ticket_v2_members WHERE channel_id=$1 AND user_id=$2',[i.channel.id,target.id]);
+          return i.reply({content:'➖ Removed '+target+'.',ephemeral:true});
+        }
+      }
     }catch(e){ console.error('Goll V2:',e); if(!i.replied&&!i.deferred) await i.reply({content:'❌ Goll V2 error. Check Railway logs.',ephemeral:true}).catch(()=>{}); }
   });
 

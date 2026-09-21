@@ -551,8 +551,11 @@ client.on('messageCreate',async message=>{
 });
 
 client.on('guildMemberAdd',async member=>{
+  // IMPORTANT: never give 👤 Member on join. The Welcome voice is the onboarding gate.
   const r=member.guild.roles.cache.find(x=>x.name==='👤 Member');
-  if(r) await member.roles.add(r).catch(()=>{});
+  if(r && member.roles.cache.has(r.id)) {
+    await member.roles.remove(r, 'Goll onboarding: Member role is granted only after Welcome voice').catch(()=>{});
+  }
   const w=member.guild.channels.cache.find(c=>c.name==='📢・welcome'&&c.type===ChannelType.GuildText);
   if(w) await w.send(`👋 Welcome ${member}!`).catch(()=>{});
 });

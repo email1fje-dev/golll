@@ -14,7 +14,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
 const TTS_TOKEN = process.env.TTS_TOKEN || '';
 const TTS_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 const { Readable } = require('stream');
 
 const client = new Client({
@@ -49,20 +49,47 @@ const CATEGORIES = {
 
 async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.query(sql, params); }
 async function playWelcomeTTS(member){
-  if(!TTS_TOKEN || !member.voice?.channel) return;
+  if(!TTS_TOKEN){
+    console.warn('Welcome TTS: TTS_TOKEN is not configured.');
+    return;
+  }
+  if(!member.voice?.channel){
+    console.warn('Welcome TTS: member is no longer in a voice channel.');
+    return;
+  }
+
+  console.log('Welcome TTS: generating audio for', member.user.tag);
   const response=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+TTS_VOICE_ID+'?output_format=mp3_44100_128',{
     method:'POST',
     headers:{'xi-api-key':TTS_TOKEN,'Content-Type':'application/json'},
     body:JSON.stringify({text:'Welcome to the server, '+member.displayName+'!',model_id:'eleven_multilingual_v2'})
   });
-  if(!response.ok) throw new Error('ElevenLabs TTS '+response.status+' '+(await response.text()).slice(0,200));
+  if(!response.ok) throw new Error('ElevenLabs TTS '+response.status+' '+(await response.text()).slice(0,500));
+
   const audio=Buffer.from(await response.arrayBuffer());
-  const connection=joinVoiceChannel({channelId:member.voice.channel.id,guildId:member.guild.id,adapterCreator:member.guild.voiceAdapterCreator,selfDeaf:true});
+  if(!audio.length) throw new Error('ElevenLabs returned an empty audio file.');
+  console.log('Welcome TTS: audio received', audio.length, 'bytes');
+
+  const channel=member.voice.channel;
+  const connection=joinVoiceChannel({
+    channelId:channel.id,
+    guildId:member.guild.id,
+    adapterCreator:member.guild.voiceAdapterCreator,
+    selfDeaf:false,
+    selfMute:false
+  });
+
+  await entersState(connection, VoiceConnectionStatus.Ready, 15000);
+  console.log('Welcome TTS: voice connection ready');
+
   const player=createAudioPlayer({behaviors:{noSubscriber:NoSubscriberBehavior.Stop}});
   connection.subscribe(player);
-  player.play(createAudioResource(Readable.from(audio)));
-  player.once(AudioPlayerStatus.Idle,()=>connection.destroy());
-  player.on('error',()=>connection.destroy());
+  const resource=createAudioResource(Readable.from(audio), {inputType: 'arbitrary'});
+  player.play(resource);
+
+  player.once(AudioPlayerStatus.Playing,()=>console.log('Welcome TTS: playback started'));
+  player.once(AudioPlayerStatus.Idle,()=>{console.log('Welcome TTS: playback finished'); connection.destroy();});
+  player.on('error',err=>{console.error('Welcome TTS player:',err.message); connection.destroy();});
 }
 
 

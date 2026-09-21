@@ -286,6 +286,17 @@ async function setupGuild(guild, repair=false) {
   if(memberRole) for(const c of guild.channels.cache.values()){
     if(c.isTextBased()&&!c.isThread()) await c.permissionOverwrites.edit(memberRole,{ViewChannel:true}).catch(()=>{});
   }
+
+  // TEMP TEST: allow everyone to enter the welcome voice channel so TTS can be tested.
+  const welcomeVoice = guild.channels.cache.find(
+    c => c.name === '👋・Welcome' && c.type === ChannelType.GuildVoice
+  );
+  if (welcomeVoice) {
+    await welcomeVoice.permissionOverwrites.edit(guild.roles.everyone, {
+      ViewChannel: true,
+      Connect: true
+    }).catch(() => {});
+  }
   const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
   if(welcome && welcome.isTextBased()){
     const row=new ActionRowBuilder().addComponents(

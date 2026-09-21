@@ -9,6 +9,7 @@ const { setupEconomy } = require('./economy');
 const { setupVerification } = require('./verification');
 const { setupAutomod } = require('./automod');
 const { setupDashboard } = require('./dashboard');
+const { startWebPanel } = require('./web-panel');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -27,6 +28,8 @@ const client = new Client({
   ],
   partials: [Partials.Channel]
 });
+
+startWebPanel(client);
 
 const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })

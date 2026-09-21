@@ -139,6 +139,41 @@ async function dbInit() {
   )`);
 }
 
+
+async function applyManagedPermissions(guild, roles) {
+  const everyone = guild.roles.everyone;
+  const byName = Object.fromEntries(roles.map(r => [r.name, r]));
+  const perms = {
+    '👑 Owner': [PermissionsBitField.Flags.Administrator],
+    '🛡️ Admin': [PermissionsBitField.Flags.ManageGuild, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ManageMessages, PermissionsBitField.Flags.ManageRoles, PermissionsBitField.Flags.KickMembers, PermissionsBitField.Flags.BanMembers, PermissionsBitField.Flags.ModerateMembers],
+    '🔨 Moderator': [PermissionsBitField.Flags.ManageMessages, PermissionsBitField.Flags.ModerateMembers, PermissionsBitField.Flags.KickMembers],
+    '🎫 Support': [PermissionsBitField.Flags.ManageMessages],
+    '📝 Trial Staff': [PermissionsBitField.Flags.ManageMessages]
+  };
+  for (const [name, flags] of Object.entries(perms)) {
+    const r = byName[name];
+    if (!r || r.managed) continue;
+    await r.setPermissions(flags, 'Goll permission sync').catch(() => {});
+  }
+
+  const staffCategory = guild.channels.cache.find(c => c.name === '👮 STAFF' && c.type === ChannelType.GuildCategory);
+  const logsCategory = guild.channels.cache.find(c => c.name === '🔐 STAFF LOGS' && c.type === ChannelType.GuildCategory);
+  if (staffCategory) {
+    await staffCategory.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(() => {});
+    for (const name of STAFF_ROLE_NAMES) {
+      const r = byName[name];
+      if (r) await staffCategory.permissionOverwrites.edit(r, { ViewChannel: true }).catch(() => {});
+    }
+  }
+  if (logsCategory) {
+    await logsCategory.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(() => {});
+    for (const name of ['👑 Owner','🛡️ Admin','🔨 Moderator']) {
+      const r = byName[name];
+      if (r) await logsCategory.permissionOverwrites.edit(r, { ViewChannel: true }).catch(() => {});
+    }
+  }
+}
+
 async function saveConfig(guildId, data) {
   await q(`INSERT INTO guild_config(guild_id,data) VALUES($1,$2)
     ON CONFLICT(guild_id) DO UPDATE SET data=$2,updated_at=NOW()`, [guildId, JSON.stringify(data)]);

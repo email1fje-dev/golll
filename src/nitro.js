@@ -13,6 +13,9 @@ function isAdmin(member) {
   return member.permissions.has('ManageGuild') ||
     member.roles.cache.some(r => ['👑 Owner','🛡️ Admin'].includes(r.name));
 }
+function isOwner(member) {
+  return member?.guild?.ownerId === member.id;
+}
 
 function setupNitro(q, client) {
   async function dbInit() {
@@ -40,7 +43,7 @@ function setupNitro(q, client) {
   }
 
   async function ensurePanel(guild, force=false) {
-    const ch = guild.channels.cache.find(c => c.name === '💎・nitro-drops' && c.type === ChannelType.GuildText);
+    const ch = guild.channels.cache.find(c => c.name === '💼・staff-panel' && c.type === ChannelType.GuildText);
     if (!ch) return;
     const exists = (await ch.messages.fetch({limit:30}).catch(()=>new Map()))
       .some(m => m.author.id === client.user.id && m.embeds[0]?.title === '⚡ Nitro Quick Drop Control');
@@ -118,7 +121,7 @@ function setupNitro(q, client) {
   client.on('interactionCreate', async i => {
     try {
       if (i.isButton() && i.customId === 'nitro_create') {
-        if (!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+        if (!isOwner(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         return i.showModal(new ModalBuilder().setCustomId('nitro_create_modal').setTitle('⚡ Create Quick Drop')
           .addComponents(
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('prize').setLabel('Prize').setStyle(TextInputStyle.Short).setRequired(true)),
@@ -145,7 +148,7 @@ function setupNitro(q, client) {
       }
 
       if (i.isModalSubmit() && i.customId === 'nitro_create_modal') {
-        if (!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+        if (!isOwner(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const prize = i.fields.getTextInputValue('prize').trim();
         const seconds = Math.max(5, Math.min(86400, parseInt(i.fields.getTextInputValue('seconds'),10) || 5));
         const ready = Math.max(1, Math.min(1000, parseInt(i.fields.getTextInputValue('ready'),10) || 1));

@@ -116,27 +116,20 @@ function staffPanel(){ return {embeds:[new EmbedBuilder().setTitle('👮 Staff M
 function giveawayPanel(){ return {embeds:[new EmbedBuilder().setTitle('🎁 Giveaway Manager V2').setDescription('Create giveaways with multiple winners and optional role, level and account-age requirements.').setColor(0xF1C40F)],components:[row(btn('v2_gw_create','🎁 Create Giveaway',ButtonStyle.Primary))]}; }
 
 async function ensurePanel(guild,q,repair=false){
-  const specs=[
-    ['🎫・tickets','🎫 Support Tickets V2',ticketTypes],
-    ['📝・apply-for-staff','📝 Staff Applications V2',()=>null],
-    ['🏖️・request-loa','🏖️ LOA Manager V2',()=>null],
-    ['💼・staff-panel','👮 Staff Management V2',()=>null]
+  const panels=[
+    ['🎫・tickets','🎫 Support Tickets V2',{embeds:[new EmbedBuilder().setTitle('🎫 Support Tickets V2').setDescription('Categories • auto routing • claim • transfer • priority • SLA • transcript • close reason • rating').setColor(0x5865F2)],components:[row(btn('v2_ticket_open','🎫 Open Ticket',ButtonStyle.Primary))]}],
+    ['📝・apply-for-staff','📝 Staff Applications V2',appPanel()],
+    ['🏖️・request-loa','🏖️ LOA Manager V2',loaPanel()],
+    ['💼・staff-panel','👮 Staff Management V2',staffPanel(),giveawayPanel()]
   ];
-  for(const [name,title] of specs){
-    const ch=guild.channels.cache.find(c=>c.name===name&&c.type===ChannelType.GuildText); if(!ch) continue;
-    const msgs=await ch.messages.fetch({limit:50}).catch(()=>new Map());
-    const old=msgs.find(m=>m.author.id===guild.client.user.id&&m.embeds.some(e=>e.title===title));
-    if(old) { if(repair) await old.delete().catch(()=>{}); else continue; }
+  for(const [name,title,...payloads] of panels){
+    const ch=guild.channels.cache.find(c=>c.name===name&&c.type===ChannelType.GuildText);
+    if(!ch) continue;
+    const msgs=await ch.messages.fetch({limit:80}).catch(()=>new Map());
+    let existing=msgs.find(m=>m.author.id===guild.client.user.id&&m.embeds.some(e=>e.title===title));
+    if(repair&&existing){ await existing.delete().catch(()=>{}); existing=null; }
+    if(!existing) for(const payload of payloads) await ch.send(payload).catch(()=>{});
   }
-  const t=guild.channels.cache.find(c=>c.name==='🎫・tickets'&&c.type===ChannelType.GuildText);
-  if(t) await t.send({embeds:[new EmbedBuilder().setTitle('🎫 Support Tickets V2').setDescription('A complete ticket workflow with categories, claiming, routing, priority, transfer, member access, SLA, transcripts, close reasons and ratings.').setColor(0x5865F2)],components:[row(btn('v2_ticket_open','🎫 Open Ticket',ButtonStyle.Primary))]}).catch(()=>{});
-  const a=guild.channels.cache.find(c=>c.name==='📝・apply-for-staff'&&c.type===ChannelType.GuildText);
-  if(a) await a.send(appPanel()).catch(()=>{});
-  const l=guild.channels.cache.find(c=>c.name==='🏖️・request-loa'&&c.type===ChannelType.GuildText);
-  if(l) await l.send(loaPanel()).catch(()=>{});
-  const s=guild.channels.cache.find(c=>c.name==='💼・staff-panel'&&c.type===ChannelType.GuildText);
-  if(s) { await s.send(staffPanel()).catch(()=>{}); await s.send(giveawayPanel()).catch(()=>{}); }
-  await q('INSERT INTO staff_v2_profiles(guild_id,user_id) SELECT $1,id FROM members WHERE false ON CONFLICT DO NOTHING',[guild.id]).catch(()=>{});
 }
 
 async function setup(client,q){
@@ -362,6 +355,20 @@ async function setup(client,q){
     }catch(e){ console.error('Goll V2:',e); if(!i.replied&&!i.deferred) await i.reply({content:'❌ Goll V2 error. Check Railway logs.',ephemeral:true}).catch(()=>{}); }
   });
 
+  const loaTimer=setInterval(async()=>{
+    const rows=(await q("SELECT * FROM loa_v2 WHERE status='APPROVED' AND ends_at<=NOW()")).rows;
+    for(const r of rows){
+      await q("UPDATE loa_v2 SET status='COMPLETED',updated_at=NOW() WHERE id=$1",[r.id]);
+      await q("UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2",[r.guild_id,r.user_id]);
+      await q("INSERT INTO staff_v2_history(guild_id,user_id,actor_id,action,details) VALUES($1,$2,$3,'LOA_RETURNED',$4)",[r.guild_id,r.user_id,r.user_id,'LOA #'+r.id+' ended automatically']);
+      const user=await client.users.fetch(r.user_id).catch(()=>null);
+      if(user) await user.send('🟢 Your LOA in **'+(client.guilds.cache.get(r.guild_id)?.name||'the server')+'** has ended. You are marked active again.').catch(()=>{});
+      const guild=client.guilds.cache.get(r.guild_id);
+      const log=guild?.channels.cache.find(c=>c.name==='🏖️・loa-logs'&&c.type===ChannelType.GuildText);
+      if(log) await log.send('🟢 <@'+r.user_id+'> automatically returned from LOA #'+r.id+'.').catch(()=>{});
+    }
+  },60000);
+  client.once('ready',()=>{ if(loaTimer.unref) loaTimer.unref(); });
   client.on('messageCreate',async m=>{
     if(m.author.bot||!m.guild)return;
     const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1 AND status IN (\'OPEN\',\'REOPENED\')',[m.channel.id])).rows[0];

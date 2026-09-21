@@ -213,6 +213,24 @@ async function chan(guild,parent,name,type) {
 }
 
 
+async function sendTicketPanel(guild, force=false) {
+  const ch=guild.channels.cache.find(c=>c.name==='🎫・tickets'&&c.type===ChannelType.GuildText);
+  if(!ch) return;
+  const exists=(await ch.messages.fetch({limit:20}).catch(()=>new Map()))
+    .some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='🎫 Support Tickets');
+  if(exists&&!force) return;
+  const row=new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('goll_ticket_menu').setLabel('🎫 Open Ticket').setStyle(ButtonStyle.Primary)
+  );
+  await ch.send({
+    embeds:[new EmbedBuilder()
+      .setTitle('🎫 Support Tickets')
+      .setDescription('Need help? Click **Open Ticket** and choose the type of support you need. You do not need a slash command.')
+      .setColor(0x5865F2)],
+    components:[row]
+  });
+}
+
 async function sendStaffPanel(guild, force=false) {
   const ch=guild.channels.cache.find(c=>c.name==='💼・staff-panel'&&c.type===ChannelType.GuildText); if(!ch) return;
   const exists=(await ch.messages.fetch({limit:30}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👮 Staff Control Panel');
@@ -277,6 +295,7 @@ async function setupGuild(guild, repair=false) {
     const exists=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
     if(!exists) await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
   }
+  await sendTicketPanel(guild, repair);
   await sendStaffPanel(guild, repair);
   await sendApplicationPanel(guild, repair);
   await sendActivityPanel(guild, repair);
@@ -339,7 +358,7 @@ async function registerCommands(){
   await client.application.commands.set(commands.map(x=>x.toJSON()));
 }
 
-client.once('ready',async()=>{await dbInit();await registerCommands();for(const g of client.guilds.cache.values()) await initInvites(g);console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
+client.once('ready',async()=>{await dbInit();await registerCommands();for(const g of client.guilds.cache.values()){ await initInvites(g); try{ await setupGuild(g,false); }catch(e){ console.error('Panel/setup:',e.message); }} console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
   await nitro.recover();
   const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;
   for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}

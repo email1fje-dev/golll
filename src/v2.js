@@ -213,6 +213,16 @@ async function setup(client,q){
           await i.channel.permissionOverwrites.delete(target.id).catch(()=>{}); await q('DELETE FROM ticket_v2_members WHERE channel_id=$1 AND user_id=$2',[i.channel.id,target.id]); return i.reply({content:'➖ Removed '+target+'.',ephemeral:true});
         }
       }
+      if(i.isButton()&&i.customId.startsWith('v2_gw_reroll:')){
+        if(!admin(i.member)) return i.reply({content:'❌ Management only.',ephemeral:true});
+        const id=i.customId.split(':')[1], r=(await q('SELECT * FROM giveaway_v2 WHERE message_id=$1',[id])).rows[0];
+        if(!r||r.status!=='ENDED') return i.reply({content:'❌ Giveaway is not finished.',ephemeral:true});
+        const eligible=(Array.isArray(r.entries)?r.entries:[]).filter(x=>!(Array.isArray(r.winner_ids)?r.winner_ids:[]).includes(x));
+        if(!eligible.length) return i.reply({content:'❌ No other eligible entries.',ephemeral:true});
+        const winner=eligible[Math.floor(Math.random()*eligible.length)];
+        await q('UPDATE giveaway_v2 SET winner_ids=$1 WHERE message_id=$2',[JSON.stringify([winner]),id]);
+        return i.reply('🔄 New winner: <@'+winner+'> — **'+r.prize+'**!');
+      }
       if(i.isButton()&&i.customId==='v2_gw_enter'){
         const r=(await q('SELECT * FROM giveaway_v2 WHERE message_id=$1',[i.message.id])).rows[0];
         if(!r||r.status!=='OPEN') return i.reply({content:'❌ Giveaway is closed.',ephemeral:true});
@@ -369,6 +379,19 @@ async function setup(client,q){
     }
   },60000);
   client.once('ready',()=>{ if(loaTimer.unref) loaTimer.unref(); });
+  const slaTimer=setInterval(async()=>{
+    const rows=(await q("SELECT * FROM ticket_v2 WHERE status IN ('OPEN','REOPENED') AND sla_at IS NOT NULL AND sla_at<=NOW()")).rows;
+    for(const t of rows){
+      await q('UPDATE ticket_v2 SET sla_at=NULL WHERE channel_id=$1',[t.channel_id]);
+      const guild=client.guilds.cache.get(t.guild_id);
+      const ch=client.channels.cache.get(t.channel_id);
+      if(ch) await ch.send({embeds:[new EmbedBuilder().setTitle('⏰ SLA Alert').setDescription('This ticket has passed its 2-hour response window. Staff attention is required.').setColor(0xED4245)]}).catch(()=>{});
+      const log=guild?.channels.cache.find(c=>c.name==='🎫・ticket-logs'&&c.type===ChannelType.GuildText);
+      if(log) await log.send('⏰ SLA exceeded for <#'+t.channel_id+'>.').catch(()=>{});
+    }
+  },60000);
+  client.once('ready',()=>{ if(slaTimer.unref) slaTimer.unref(); });
+
   client.on('messageCreate',async m=>{
     if(m.author.bot||!m.guild)return;
     const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1 AND status IN (\'OPEN\',\'REOPENED\')',[m.channel.id])).rows[0];

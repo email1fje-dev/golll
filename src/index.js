@@ -403,7 +403,7 @@ client.on('interactionCreate',async i=>{
         return i.editReply(`✅ Goll setup complete — ${Object.keys(r.roles).length} roles, ${Object.keys(r.channels).length} categories.`);
       }
       if(cmd==='goll') return i.reply({ephemeral:true,embeds:[new EmbedBuilder().setTitle('🤖 Goll Control Center').setDescription('⚙️ Setup  •  👮 Staff  •  🎫 Tickets  •  🛡️ Moderation  •  🎁 Giveaways  •  💰 Economy  •  🔊 Voice').setColor(0x5865F2)]});
-      if(['warn','warnings','timeout','kick','ban'].includes(cmd)){
+      if(['warn','warnings','timeout','kick','ban','modlogs','clear'].includes(cmd)){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const u=i.options.getUser('user');
         if(cmd==='modlogs'){

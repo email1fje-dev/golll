@@ -246,6 +246,35 @@ async function chan(guild,parent,name,type) {
 }
 
 
+async function seedChannelContent(guild, force=false) {
+  const cards = [
+    ['📜・rules','📜 Server Rules','Please read and follow the server rules before chatting.\n\n• Be respectful.\n• No spam or harmful content.\n• Follow Discord Terms of Service.\n• Staff decisions and support requests should stay respectful.'],
+    ['📢・announcements','📢 Announcements','Official server announcements will be posted here. Turn on notifications if you want to keep up with important updates.'],
+    ['ℹ️・about-us','ℹ️ About Goll','Welcome to **Goll**! This server is built around community, events, support, staff systems, giveaways and voice features.'],
+    ['🤝・partnerships','🤝 Partnerships','Interested in a partnership? Open a support ticket and choose **Partnership** so the team can review your request.'],
+    ['🎉・giveaways','🎁 Giveaways','Active giveaways will appear here. Use the **ENTER** button on a giveaway message to participate.'],
+    ['💎・nitro-drops','💎 Nitro Drops','Nitro Quick Drops will appear here when the server owner starts one. Keep an eye on this channel for active drops.'],
+    ['🏆・winners','🏆 Winners','Winners of giveaways and Nitro Quick Drops will be recorded here. Good luck! 🍀'],
+    ['💬・general','💬 General','This is the main community chat. Say hi and start a conversation!'],
+    ['🖼️・media','🖼️ Media','Share your favorite screenshots, creations and other community-friendly media here.'],
+    ['😂・memes','😂 Memes','The meme zone. Keep it server-friendly. 😂'],
+    ['🎮・gaming','🎮 Gaming','Talk about games, find teammates and share your gaming moments. 🎮'],
+    ['📊・levels','📊 Levels','Your server XP and level information can be displayed here as the leveling system grows.'],
+    ['📚・staff-info','📚 Staff Info','Staff resources, expectations and internal information belong here.'],
+    ['🛡️・automod','🛡️ AutoMod','AutoMod protects the server from spam, links and excessive caps. Configuration is handled by management.'],
+    ['📊・dashboard','📊 Dashboard','The staff dashboard is reserved for server management and operational information.']
+  ];
+  for (const [name,title,description] of cards) {
+    const ch=guild.channels.cache.find(c=>c.name===name&&c.type===ChannelType.GuildText);
+    if (!ch) continue;
+    const exists=(await ch.messages.fetch({limit:20}).catch(()=>new Map()))
+      .some(m=>m.author.id===client.user.id&&m.embeds[0]?.title===title);
+    if (!exists || force) {
+      await ch.send({embeds:[new EmbedBuilder().setTitle(title).setDescription(description).setColor(0x5865F2)]}).catch(()=>{});
+    }
+  }
+}
+
 async function sendTicketPanel(guild, force=false) {
   const ch=guild.channels.cache.find(c=>c.name==='🎫・tickets'&&c.type===ChannelType.GuildText);
   if(!ch) return;
@@ -344,6 +373,7 @@ async function setupGuild(guild, repair=false) {
     const exists=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
     if(!exists) await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
   }
+  await seedChannelContent(guild, repair);
   await sendTicketPanel(guild, repair);
   await sendStaffPanel(guild, repair);
   await sendApplicationPanel(guild, repair);

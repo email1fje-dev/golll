@@ -107,7 +107,11 @@ async function transcript(i){
 async function closeTicket(i,q){
   const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0];
   if(!t||t.status==='CLOSED') return i.reply({content:'❌ Ticket is already closed.',ephemeral:true});
-  return i.showModal(modal('v2_ticket_close_modal','🔒 Close Ticket',[{id:'reason',label:'Close reason',long:true,max:500}]));
+  await q("UPDATE ticket_v2 SET status='CLOSED',closed_at=NOW(),close_reason=$1,sla_at=NULL WHERE channel_id=$2",['Closed by '+i.user.tag,i.channel.id]);
+  await i.channel.permissionOverwrites.edit(t.opener_id,{ViewChannel:false,SendMessages:false}).catch(e=>console.error('Ticket close permission:',e));
+  await i.channel.setName(('closed-'+i.channel.name.replace(/^closed-/,'')).slice(0,100)).catch(()=>{});
+  await logTicket(q,i.guild,i.channel.id,i.user.id,'CLOSED','Closed by button');
+  return i.reply({content:'🔒 **Ticket closed.** The requester can no longer send/view it. Staff can reopen it below.',components:[row(btn('v2_ticket_reopen','🔓 Reopen',ButtonStyle.Success),btn('v2_ticket_rate','⭐ Rate',ButtonStyle.Primary),btn('v2_ticket_transcript','📄 Transcript'))]});
 }
 
 function appPanel(){ return {embeds:[new EmbedBuilder().setTitle('📝 Staff Applications V2').setDescription('Application pipeline:\n**Pending → Interview → Accepted / Denied → Archived**\n\nYour application is reviewed through the staff panel.').setColor(0x5865F2)],components:[row(btn('v2_apply','📝 Apply for Staff',ButtonStyle.Primary))]}; }
@@ -256,7 +260,7 @@ async function setup(client,q){
         const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0];
         if(!t||t.status!=='CLOSED') return i.reply({content:'❌ Ticket is not closed.',ephemeral:true});
         await q("UPDATE ticket_v2 SET status='REOPENED',closed_at=NULL,close_reason=NULL WHERE channel_id=$1",[i.channel.id]);
-        await i.channel.permissionOverwrites.edit(t.opener_id,{SendMessages:true}).catch(()=>{});
+        await i.channel.permissionOverwrites.edit(t.opener_id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}).catch(()=>{});
         await i.channel.setName(i.channel.name.replace(/^closed-/,'').slice(0,100)).catch(()=>{});
         await logTicket(q,i.guild,i.channel.id,i.user.id,'REOPENED');
         return i.reply('🔓 Ticket reopened.');
@@ -268,13 +272,14 @@ async function setup(client,q){
           await q('UPDATE ticket_v2 SET priority=$1 WHERE channel_id=$2',[p,i.channel.id]); await logTicket(q,i.guild,i.channel.id,i.user.id,'PRIORITY',p); return i.reply('⚡ Priority changed to **'+p+'**.');
         }
         if(i.customId==='v2_ticket_close_modal'){
-          const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0]; if(!t) return i.reply({content:'❌ Ticket not found.',ephemeral:true});
-          const reason=i.fields.getTextInputValue('reason').trim();
-          await q('UPDATE ticket_v2 SET status=\'CLOSED\',closed_at=NOW(),close_reason=$1 WHERE channel_id=$2',[reason,i.channel.id]);
-          await i.channel.permissionOverwrites.edit(t.opener_id,{SendMessages:false}).catch(()=>{});
-          await i.channel.setName(('closed-'+i.channel.name).slice(0,100)).catch(()=>{});
+          const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0];
+          if(!t||t.status==='CLOSED') return i.reply({content:'❌ Ticket is already closed.',ephemeral:true});
+          const reason=i.fields.getTextInputValue('reason').trim()||'Closed by staff';
+          await q("UPDATE ticket_v2 SET status='CLOSED',closed_at=NOW(),close_reason=$1,sla_at=NULL WHERE channel_id=$2",[reason,i.channel.id]);
+          await i.channel.permissionOverwrites.edit(t.opener_id,{ViewChannel:false,SendMessages:false}).catch(()=>{});
+          await i.channel.setName(('closed-'+i.channel.name.replace(/^closed-/,'')).slice(0,100)).catch(()=>{});
           await logTicket(q,i.guild,i.channel.id,i.user.id,'CLOSED',reason);
-          await i.channel.send({embeds:[new EmbedBuilder().setTitle('🔒 Ticket Closed').setDescription('Reason: **'+reason+'**\n\nThe requester can rate the support they received.').setColor(0xED4245)],components:[row(btn('v2_ticket_reopen','🔓 Reopen',ButtonStyle.Success),btn('v2_ticket_rate','⭐ Rate Support',ButtonStyle.Primary),btn('v2_ticket_transcript','📄 Transcript'))]});
+          await i.channel.send({embeds:[new EmbedBuilder().setTitle('🔒 Ticket Closed').setDescription('Reason: **'+reason+'**\n\nStaff can reopen this ticket when needed.').setColor(0xED4245)],components:[row(btn('v2_ticket_reopen','🔓 Reopen',ButtonStyle.Success),btn('v2_ticket_rate','⭐ Rate Support',ButtonStyle.Primary),btn('v2_ticket_transcript','📄 Transcript'))]});
           return i.reply('🔒 Ticket closed.');
         }
         if(i.customId==='v2_loa_modal'){

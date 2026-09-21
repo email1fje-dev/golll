@@ -88,7 +88,7 @@ async function ensureStats(guild){
   if(!cat) cat=await guild.channels.create({name:OWNER_CATEGORY,type:ChannelType.GuildCategory,reason:'Goll Owner Hub'});
   const ow=await guild.fetchOwner().catch(()=>null);
   await cat.permissionOverwrites.edit(guild.roles.everyone,{ViewChannel:false}).catch(()=>{});
-  if(ow) await cat.permissionOverwrites.edit(ow,{ViewChannel:true,Connect:true,ViewChannel:true}).catch(()=>{});
+  if(ow) await cat.permissionOverwrites.edit(ow,{ViewChannel:true,Connect:true}).catch(()=>{});
 
   const counts=[
     ['📈 Members',guild.memberCount],

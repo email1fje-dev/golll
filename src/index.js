@@ -390,6 +390,8 @@ async function setupGuild(guild, repair=false) {
   return {roles,channels};
 }
 
+client.goll = { setupGuild, query: q };
+
 function isStaff(member){ return member.roles.cache.some(r=>STAFF_ROLES.has(r.name)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild); }
 function isAdmin(member){ return member.permissions.has(PermissionsBitField.Flags.ManageGuild) || member.roles.cache.some(r=>['👑 Owner','🛡️ Admin'].includes(r.name)); }
 function isOwner(member){ return member?.guild?.ownerId===member.id; }

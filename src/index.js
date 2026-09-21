@@ -7,6 +7,7 @@ const { Pool } = require('pg');
 const { setupNitro } = require('./nitro');
 const { setupEconomy } = require('./economy');
 const { setupVerification } = require('./verification');
+const { setupAutomod } = require('./automod');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -37,7 +38,7 @@ const CATEGORIES = {
   '💬 COMMUNITY': [['💬・general',0],['🖼️・media',0],['😂・memes',0],['🎮・gaming',0],['📊・levels',0]],
   '🎫 SUPPORT': [['🎫・tickets',0],['📝・apply-for-staff',0],['🤝・partnerships',0]],
   '🎁 GIVEAWAYS': [['🎉・giveaways',0],['💎・nitro-drops',0],['🏆・winners',0]],
-  '👮 STAFF': [['📋・activity-check',0],['🏖️・request-loa',0],['💼・staff-panel',0],['📚・staff-info',0]],
+  '👮 STAFF': [['📋・activity-check',0],['🏖️・request-loa',0],['💼・staff-panel',0],['📚・staff-info',0],['🛡️・automod',0]],
   '🔐 STAFF LOGS': [['📋・application-logs',0],['🎫・ticket-logs',0],['🏖️・loa-logs',0],['⚙️・updates-logs',0]],
   '🔊 VOICE': [['👋・Welcome',2],['🔊・General',2],['🎮・Gaming',2],['🔒・Private VC',2]]
 };
@@ -47,6 +48,7 @@ async function q(sql, params=[]) { if (!pool) return {rows:[]}; return pool.quer
 const nitro = setupNitro(q, client);
 const economy = setupEconomy(q, client);
 const verification = setupVerification(q, client);
+const automod = setupAutomod(q, client);
 
 async function initInvites(guild){
   try {
@@ -117,7 +119,14 @@ async function dbInit() {
     check_id BIGINT, guild_id TEXT, user_id TEXT, reason TEXT NOT NULL DEFAULT 'NO_RESPONSE',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY(check_id,user_id)
-  )`);  await q(`CREATE TABLE IF NOT EXISTS temp_voice(
+  )`);  await q(`CREATE TABLE IF NOT EXISTS automod_settings(
+    guild_id TEXT PRIMARY KEY,
+    anti_spam BOOLEAN NOT NULL DEFAULT TRUE,
+    anti_links BOOLEAN NOT NULL DEFAULT TRUE,
+    anti_caps BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await q(`CREATE TABLE IF NOT EXISTS temp_voice(
     channel_id TEXT PRIMARY KEY, guild_id TEXT, owner_id TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
   )`);
   await nitro.dbInit();
@@ -217,6 +226,7 @@ async function setupGuild(guild, repair=false) {
   await sendGiveawayPanel(guild, repair);
   await nitro.ensurePanel(guild, repair);
   await verification.ensurePanel(guild);
+  await automod.ensurePanel(guild, repair);
   await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }

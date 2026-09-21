@@ -180,6 +180,10 @@ async function dbInit() {
   await q(`CREATE TABLE IF NOT EXISTS temp_voice(
     channel_id TEXT PRIMARY KEY, guild_id TEXT, owner_id TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  await q(`CREATE TABLE IF NOT EXISTS welcome_tts_seen(
+    guild_id TEXT, user_id TEXT, first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY(guild_id,user_id)
+  )`);
   await nitro.dbInit();
   await q(`CREATE TABLE IF NOT EXISTS economy(
     guild_id TEXT, user_id TEXT, balance BIGINT NOT NULL DEFAULT 0,
@@ -316,12 +320,17 @@ async function setupGuild(guild, repair=false) {
     if(c.isTextBased()&&!c.isThread()) await c.permissionOverwrites.edit(memberRole,{ViewChannel:true}).catch(()=>{});
   }
 
-  // TEMP TEST: allow everyone to enter the welcome voice channel so TTS can be tested.
+  // Welcome voice is for members; @everyone should not see it before becoming a member.
   const welcomeVoice = guild.channels.cache.find(
     c => c.name === '👋・Welcome' && c.type === ChannelType.GuildVoice
   );
-  if (welcomeVoice) {
+  const memberRoleForWelcome = guild.roles.cache.get(roles['👤 Member']);
+  if (welcomeVoice && memberRoleForWelcome) {
     await welcomeVoice.permissionOverwrites.edit(guild.roles.everyone, {
+      ViewChannel: false,
+      Connect: false
+    }).catch(() => {});
+    await welcomeVoice.permissionOverwrites.edit(memberRoleForWelcome, {
       ViewChannel: true,
       Connect: true
     }).catch(() => {});
@@ -437,6 +446,10 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
 client.on('voiceStateUpdate',async(oldS,newS)=>{
   try{
     if(!oldS.channelId && newS.channelId && newS.channel.name==='👋・Welcome' && !newS.member.user.bot){
+      if (pool) {
+        const seen = await q('INSERT INTO welcome_tts_seen(guild_id,user_id) VALUES($1,$2) ON CONFLICT(guild_id,user_id) DO NOTHING RETURNING user_id',[newS.guild.id,newS.member.id]);
+        if (!seen.rows.length) return;
+      }
       await playWelcomeTTS(newS.member).catch(e=>console.error('Welcome TTS:',e.message));
     }
     if(!oldS.channelId && newS.channelId){

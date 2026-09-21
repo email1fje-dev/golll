@@ -64,7 +64,7 @@ async function playWelcomeTTS(member){
   const response=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+TTS_VOICE_ID+'?output_format=mp3_44100_128',{
     method:'POST',
     headers:{'xi-api-key':TTS_TOKEN,'Content-Type':'application/json'},
-    body:JSON.stringify({text:'Welcome to the server, '+member.displayName+'!',model_id:'eleven_multilingual_v2'})
+    body:JSON.stringify({text:'Welcome to Goll! We are happy to have you here, '+member.displayName+'! Please make sure to read the server rules, have fun, and enjoy your time with everyone.',model_id:'eleven_multilingual_v2'})
   });
   if(!response.ok) throw new Error('ElevenLabs TTS '+response.status+' '+(await response.text()).slice(0,500));
 

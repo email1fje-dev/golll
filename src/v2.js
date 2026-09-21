@@ -419,6 +419,6 @@ async function finishGiveaway(messageId,q,client){
   }
   const shuffled=[...eligible].sort(()=>Math.random()-0.5),winners=shuffled.slice(0,r.winners);
   await q('UPDATE giveaway_v2 SET status=\'ENDED\',winner_ids=$1 WHERE message_id=$2',[JSON.stringify(winners),messageId]);
-  await ch.send({embeds:[new EmbedBuilder().setTitle('🏆 Giveaway V2 Finished').setDescription('**Prize:** '+r.prize+'\n'+(winners.length?'**Winners:** '+winners.map(x=>'<@'+x+'>').join(', '):'No eligible winners.')).setColor(0x57F287)]});
+  await ch.send({embeds:[new EmbedBuilder().setTitle('🏆 Giveaway V2 Finished').setDescription('**Prize:** '+r.prize+'\n'+(winners.length?'**Winners:** '+winners.map(x=>'<@'+x+'>').join(', '):'No eligible winners.')).setColor(0x57F287)],components:[row(btn('v2_gw_reroll:'+messageId,'🔄 Reroll',ButtonStyle.Secondary))]});
 }
 module.exports={dbInit,setup,ensurePanel};

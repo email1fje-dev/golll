@@ -268,7 +268,7 @@ async function sendActivityPanel(guild, force=false) {
   await ch.send({embeds:[new EmbedBuilder().setTitle('📋 Staff Activity Control').setDescription("Management can start or close an activity check here. Staff members only need to press I'M ACTIVE when a check is running.").setColor(0x57F287)],components:[row]});
 }
 async function sendGiveawayPanel(guild, force=false) {
-  const ch=guild.channels.cache.find(c=>c.name==='🎉・giveaways'&&c.type===ChannelType.GuildText); if(!ch) return;
+  const ch=guild.channels.cache.find(c=>c.name==='💼・staff-panel'&&c.type===ChannelType.GuildText); if(!ch) return;
   const exists=(await ch.messages.fetch({limit:30}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='🎁 Giveaway Control');
   if(exists&&!force) return;
   const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('giveaway_create').setLabel('🎁 CREATE GIVEAWAY').setStyle(ButtonStyle.Primary));

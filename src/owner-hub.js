@@ -84,6 +84,12 @@ async function ensureHub(guild,q,force=false){
 }
 
 async function ensureStats(guild){
+  let cat=guild.channels.cache.find(c=>c.type===ChannelType.GuildCategory&&c.name===OWNER_CATEGORY);
+  if(!cat) cat=await guild.channels.create({name:OWNER_CATEGORY,type:ChannelType.GuildCategory,reason:'Goll Owner Hub'});
+  const ow=await guild.fetchOwner().catch(()=>null);
+  await cat.permissionOverwrites.edit(guild.roles.everyone,{ViewChannel:false}).catch(()=>{});
+  if(ow) await cat.permissionOverwrites.edit(ow,{ViewChannel:true,Connect:true,ViewChannel:true}).catch(()=>{});
+
   const counts=[
     ['📈 Members',guild.memberCount],
     ['💬 Channels',guild.channels.cache.size],
@@ -91,8 +97,20 @@ async function ensureStats(guild){
   ];
   for(const [name,value] of counts){
     let ch=guild.channels.cache.find(c=>c.type===ChannelType.GuildVoice&&c.name.startsWith(name));
-    if(!ch) ch=await guild.channels.create({name:name+' • '+value,type:ChannelType.GuildVoice,reason:'Goll server stats'});
-    else if(ch.name!==name+' • '+value) await ch.setName(name+' • '+value).catch(()=>{});
+    if(!ch) ch=await guild.channels.create({
+      name:name+' • '+value,type:ChannelType.GuildVoice,parent:cat.id,
+      permissionOverwrites:[
+        {id:guild.roles.everyone.id,deny:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect]},
+        ...(ow?[{id:ow.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.Connect]}]:[])
+      ],
+      reason:'Goll server stats'
+    });
+    else {
+      if(ch.parentId!==cat.id) await ch.setParent(cat.id).catch(()=>{});
+      await ch.permissionOverwrites.edit(guild.roles.everyone,{ViewChannel:false,Connect:false}).catch(()=>{});
+      if(ow) await ch.permissionOverwrites.edit(ow,{ViewChannel:true,Connect:true}).catch(()=>{});
+      if(ch.name!==name+' • '+value) await ch.setName(name+' • '+value).catch(()=>{});
+    }
   }
 }
 

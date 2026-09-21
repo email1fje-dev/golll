@@ -9,7 +9,7 @@ const { setupEconomy } = require('./economy');
 const { setupVerification } = require('./verification');
 const { setupAutomod } = require('./automod');
 const { setupDashboard } = require('./dashboard');
-const { startWebPanel } = require('./web-panel');
+const discordOwner = require('./discord-owner');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -29,7 +29,6 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-startWebPanel(client);
 
 const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
@@ -188,6 +187,7 @@ async function dbInit() {
     PRIMARY KEY(guild_id,user_id)
   )`);
   await nitro.dbInit();
+  await discordOwner.dbInit(q);
   await q(`CREATE TABLE IF NOT EXISTS economy(
     guild_id TEXT, user_id TEXT, balance BIGINT NOT NULL DEFAULT 0,
     xp INT NOT NULL DEFAULT 0, level INT NOT NULL DEFAULT 0,
@@ -386,11 +386,13 @@ async function setupGuild(guild, repair=false) {
   await verification.ensurePanel(guild);
   await automod.ensurePanel(guild, repair);
   await dashboard.ensurePanel(guild, repair);
+  await discordOwner.ensurePanel(guild, q, repair);
   await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }
 
 client.goll = { setupGuild, query: q };
+discordOwner.setup(client, q);
 
 function isStaff(member){ return member.roles.cache.some(r=>STAFF_ROLES.has(r.name)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild); }
 function isAdmin(member){ return member.permissions.has(PermissionsBitField.Flags.ManageGuild) || member.roles.cache.some(r=>['👑 Owner','🛡️ Admin'].includes(r.name)); }
@@ -544,7 +546,7 @@ client.on('interactionCreate',async i=>{
         await i.deferReply({ephemeral:true}); const r=await setupGuild(i.guild,i.options.getBoolean('repair')===true);
         return i.editReply(`✅ Goll setup complete — ${Object.keys(r.roles).length} roles, ${Object.keys(r.channels).length} categories.`);
       }
-      if(cmd==='goll') return i.reply({ephemeral:true,embeds:[new EmbedBuilder().setTitle('🤖 Goll Control Center').setDescription('⚙️ Setup  •  👮 Staff  •  🎫 Tickets  •  🛡️ Moderation  •  🎁 Giveaways  •  💰 Economy  •  🔊 Voice').setColor(0x5865F2)]});
+      if(cmd==='goll') { if(!isOwner(i.member)) return i.reply({content:'❌ Only the server owner can open Goll Owner Control.',ephemeral:true}); return i.reply({ephemeral:true,embeds:[new EmbedBuilder().setTitle('🤖 Goll Owner Control').setDescription('Use **/gollowner** for the full private owner control panel.').setColor(0x5865F2)]}); }
       if(['warn','warnings','timeout','kick','ban','modlogs','clear'].includes(cmd)){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const u=i.options.getUser('user');

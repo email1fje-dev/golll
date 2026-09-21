@@ -353,8 +353,19 @@ async function setupGuild(guild, repair=false) {
   const roles={}; for(const [n] of MANAGED_ROLES) roles[n]=(await role(guild,n)).id;
 
   // Goll owns these resources. If an earlier setup/redeploy created duplicates,
-  // keep one copy and remove the extras so setup is idempotent.
+  // clean duplicates by managed name globally, then keep one canonical resource.
   for (const [catName, items] of Object.entries(CATEGORIES)) {
+    const wantedCategory = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === catName);
+    if (wantedCategory) {
+      for (const [name,type] of items) {
+        const matches = guild.channels.cache.filter(c => c.name === name && c.type === type);
+        if (matches.size > 1) {
+          const inWanted = [...matches.values()].find(c => c.parentId === wantedCategory.id);
+          const keep = inWanted || [...matches.values()].sort((a,b)=>a.id.localeCompare(b.id))[0];
+          for (const dup of matches.values()) if (dup.id !== keep.id) await dup.delete('Goll setup: remove duplicate managed channel').catch(()=>{});
+        }
+      }
+    }
     const cats = guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory && c.name === catName);
     if (cats.size > 1) {
       const keep = [...cats.values()].sort((a,b) => b.children.cache.size - a.children.cache.size || a.id.localeCompare(b.id))[0];

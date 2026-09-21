@@ -65,7 +65,7 @@ async function dbInit() {
     PRIMARY KEY(guild_id,code)
   )`);
   await q(`CREATE TABLE IF NOT EXISTS invite_uses(
-    guild_id TEXT, user_id TEXT PRIMARY KEY, inviter_id TEXT, code TEXT,
+    guild_id TEXT, user_id TEXT, inviter_id TEXT, code TEXT,
     joined_at TIMESTAMPTZ DEFAULT NOW()
   )`);
   await q(`CREATE TABLE IF NOT EXISTS verification_logs(
@@ -334,7 +334,7 @@ client.on('guildMemberAdd',async member=>{
     let used=null;
     for(const inv of current.values()){const old=before.get(inv.code)||0;if((inv.uses||0)>old){used=inv;break;}}
     if(used){
-      await q('INSERT INTO invite_uses(guild_id,user_id,inviter_id,code) VALUES($1,$2,$3,$4) ON CONFLICT(user_id) DO NOTHING',[member.guild.id,member.id,used.inviterId,used.code]);
+      await q('INSERT INTO invite_uses(guild_id,user_id,inviter_id,code) VALUES($1,$2,$3,$4) ON CONFLICT(guild_id,user_id) DO NOTHING',[member.guild.id,member.id,used.inviterId,used.code]);
       await q('UPDATE invite_codes SET uses=$1 WHERE guild_id=$2 AND code=$3',[used.uses||0,member.guild.id,used.code]);
       const ch=member.guild.channels.cache.find(c=>c.name==='📢・announcements'&&c.type===ChannelType.GuildText);
       if(ch&&used.inviterId) await ch.send(`🎉 Welcome <@${member.id}>! Invited by <@${used.inviterId}>.`).catch(()=>{});
@@ -408,7 +408,7 @@ client.on('interactionCreate',async i=>{
         const u=i.options.getUser('user');
         if(cmd==='modlogs'){
           const filter=i.options.getUser('user');
-          const rows=(await q(`SELECT action,reason,moderator_id,created_at FROM moderation_logs WHERE guild_id=$1 ${filter?'AND target_id=$2':''} ORDER BY created_at DESC LIMIT 15`,filter?[i.guild.id,filter.id]:[i.guild.id])).rows;
+          const rows=(await q(`SELECT target_id,action,reason,moderator_id,created_at FROM moderation_logs WHERE guild_id=$1 ${filter?'AND target_id=$2':''} ORDER BY created_at DESC LIMIT 15`,filter?[i.guild.id,filter.id]:[i.guild.id])).rows;
           return i.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Moderation Logs').setDescription(rows.length?rows.map(x=>`• **${x.action}** — <@${x.target_id}> — ${x.reason||'No reason'} — <t:${Math.floor(new Date(x.created_at).getTime()/1000)}:R>`).join('\\n'):'No moderation actions found.').setColor(0x5865F2)]});
         }
         if(cmd==='clear'){

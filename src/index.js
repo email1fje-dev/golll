@@ -310,6 +310,7 @@ async function setupGuild(guild, repair=false) {
 
 function isStaff(member){ return member.roles.cache.some(r=>STAFF_ROLES.has(r.name)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild); }
 function isAdmin(member){ return member.permissions.has(PermissionsBitField.Flags.ManageGuild) || member.roles.cache.some(r=>['👑 Owner','🛡️ Admin'].includes(r.name)); }
+function isOwner(member){ return member?.guild?.ownerId===member.id; }
 
 async function openTicket(interaction,type='General Support'){
   const existing=(await q('SELECT channel_id FROM tickets WHERE guild_id=$1 AND opener_id=$2 AND closed=false',[interaction.guild.id,interaction.user.id])).rows[0];
@@ -547,7 +548,7 @@ client.on('interactionCreate',async i=>{
         return i.showModal(modal);
       }
       if(cmd==='giveaway'){
-        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+        if(!isOwner(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const prize=i.options.getString('prize'), minutes=i.options.getInteger('minutes'), end=Date.now()+minutes*60000;
         const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('giveaway_join').setLabel('🎉 ENTER').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('giveaway_reroll').setLabel('🔄 REROLL').setStyle(ButtonStyle.Secondary));
@@ -590,7 +591,7 @@ client.on('interactionCreate',async i=>{
       if(i.customId==='staff_end_loa'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});await q('UPDATE staff_status SET active=true,loa_until=NULL,loa_reason=NULL,updated_at=NOW() WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id]);return i.reply({content:'🔙 Your LOA has ended. You are ACTIVE again.',ephemeral:true});}
       if(i.customId==='activity_start'){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('activity_modal').setTitle('📋 Start Activity Check').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('minutes').setLabel('Response window (minutes)').setStyle(TextInputStyle.Short).setRequired(true))));}
       if(i.customId==='activity_close'){if(!isAdmin(i.member))return i.reply({content:'❌ Admin only.',ephemeral:true});const open=(await q("SELECT id FROM activity_checks WHERE guild_id=$1 AND status='OPEN' ORDER BY id DESC LIMIT 1",[i.guild.id])).rows[0];if(!open)return i.reply({content:'❌ No open activity check.',ephemeral:true});await closeActivity(open.id,i.user.id);return i.reply({content:'🔒 Activity check closed.',ephemeral:true});}
-      if(i.customId==='giveaway_create'){if(!isStaff(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('giveaway_modal').setTitle('🎁 Create Giveaway').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('prize').setLabel('Prize').setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('minutes').setLabel('Duration (minutes)').setStyle(TextInputStyle.Short).setRequired(true))));}
+      if(i.customId==='giveaway_create'){if(!isOwner(i.member))return i.reply({content:'❌ Staff only.',ephemeral:true});return i.showModal(new ModalBuilder().setCustomId('giveaway_modal').setTitle('🎁 Create Giveaway').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('prize').setLabel('Prize').setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('minutes').setLabel('Duration (minutes)').setStyle(TextInputStyle.Short).setRequired(true))));}
       if(i.customId.startsWith('app_')){
         if(!isAdmin(i.member)) return i.reply({content:'❌ Admin only.',ephemeral:true});
         const [action,id]=i.customId.split(':');
@@ -684,7 +685,7 @@ client.on('interactionCreate',async i=>{
         return i.reply({content:'📄 Transcript generated.',files:[file],ephemeral:true});
       }
       if(i.customId==='giveaway_reroll'){
-        if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
+        if(!isOwner(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const r=(await q("SELECT * FROM giveaways WHERE message_id=$1",[i.message.id])).rows[0];
         if(!r || r.status==='OPEN') return i.reply({content:'❌ The giveaway must be finished before rerolling.',ephemeral:true});
         const p=(r.participants||[]).filter(x=>x!==r.winner_id);

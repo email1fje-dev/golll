@@ -10,6 +10,7 @@ const { setupVerification } = require('./verification');
 const { setupAutomod } = require('./automod');
 const { setupDashboard } = require('./dashboard');
 const discordOwner = require('./discord-owner');
+const ownerHub = require('./owner-hub');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 if (!DISCORD_TOKEN) throw new Error('Missing DISCORD_TOKEN');
@@ -188,6 +189,7 @@ async function dbInit() {
   )`);
   await nitro.dbInit();
   await discordOwner.dbInit(q);
+  await ownerHub.dbInit(q);
   await q(`CREATE TABLE IF NOT EXISTS economy(
     guild_id TEXT, user_id TEXT, balance BIGINT NOT NULL DEFAULT 0,
     xp INT NOT NULL DEFAULT 0, level INT NOT NULL DEFAULT 0,
@@ -387,12 +389,14 @@ async function setupGuild(guild, repair=false) {
   await automod.ensurePanel(guild, repair);
   await dashboard.ensurePanel(guild, repair);
   await discordOwner.ensurePanel(guild, q, repair);
+  await ownerHub.ensureHub(guild, q, repair);
   await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
   return {roles,channels};
 }
 
 client.goll = { setupGuild, query: q };
 discordOwner.setup(client, q);
+ownerHub.setup(client, q);
 
 function isStaff(member){ return member.roles.cache.some(r=>STAFF_ROLES.has(r.name)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild); }
 function isAdmin(member){ return member.permissions.has(PermissionsBitField.Flags.ManageGuild) || member.roles.cache.some(r=>['👑 Owner','🛡️ Admin'].includes(r.name)); }

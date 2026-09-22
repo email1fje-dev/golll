@@ -720,7 +720,10 @@ client.on('interactionCreate',async i=>{
         return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});
       }
       if(cmd==='voice') {
-        const memberRole=i.guild.roles.cache.find(r=>r.name==='👤 Member');\n        if(!memberRole || !i.member.roles.cache.has(memberRole.id)) return i.reply({content:'🔒 Finish Welcome voice onboarding first.',ephemeral:true});\n        return createTempVoice(i);\n      }
+        const memberRole=i.guild.roles.cache.find(r=>r.name==='👤 Member');
+        if(!memberRole || !i.member.roles.cache.has(memberRole.id)) return i.reply({content:'🔒 Finish Welcome voice onboarding first.',ephemeral:true});
+        return createTempVoice(i);
+      }
       if(cmd==='active'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const old=(await q('SELECT active FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0]?.active ?? false;

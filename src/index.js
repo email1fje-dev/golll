@@ -568,6 +568,32 @@ async function setupGuild(guild, repair=false) {
       await unlockMember(m).catch(()=>{});
     }
   }
+  // Final permission sync: explicitly restore Member access on public categories/channels.
+  // This also clears stale per-user onboarding denies from previous broken setups.
+  if (mr) {
+    for (const m of guild.members.cache.values()) {
+      if (m.user.bot || m.roles.cache.some(r => STAFF_ROLES.has(r.name))) continue;
+      if (!m.roles.cache.has(mr.id)) await m.roles.add(mr, 'Goll: restore Member role').catch(()=>{});
+      await unlockMember(m).catch(()=>{});
+    }
+  }
+  const publicCategories = new Set(['📌 INFORMATION','💬 COMMUNITY','🎫 SUPPORT','🎁 GIVEAWAYS','🔊 VOICE']);
+  for (const cat of guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory && publicCategories.has(c.name)).values()) {
+    if (mr) await cat.permissionOverwrites.edit(mr, { ViewChannel:true }).catch(()=>{});
+    for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
+      const isVoice = ch.type === ChannelType.GuildVoice || ch.type === ChannelType.GuildStageVoice;
+      if (mr) await ch.permissionOverwrites.edit(mr, isVoice
+        ? { ViewChannel:true, Connect:true }
+        : {
+            ViewChannel:true,
+            SendMessages: ['💬・general','🖼️・media','😂・memes','🎮・gaming'].includes(ch.name),
+            AddReactions: ['💬・general','🖼️・media','😂・memes','🎮・gaming'].includes(ch.name),
+            CreatePublicThreads:false,
+            CreatePrivateThreads:false,
+            SendMessagesInThreads:false
+          }).catch(()=>{});
+    }
+  }
   await cleanupLegacyPanels(guild);
   const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
   if(welcome && welcome.isTextBased()){
@@ -1153,6 +1179,18 @@ async function finishGiveaway(messageId){
   if(msg) await msg.edit({components:[],embeds:[EmbedBuilder.from(msg.embeds[0]).setDescription(`**Prize:** ${r.prize}\\n**Winner:** ${winner?`<@${winner}>`:'No eligible entries.'}`).setColor(0x57F287)]}).catch(()=>{});
   if(channel) await channel.send(winner?`🎉 Congratulations <@${winner}>! You won **${r.prize}**!`:'⏰ Giveaway expired with no entries.');
 }
+
+// Hard runtime guard: managed Goll channels never allow threads, even if an old role overwrite still exists.
+client.on('threadCreate', async thread => {
+  try {
+    if (!thread.guild || !thread.parent) return;
+    const managedChannels = new Set(Object.values(CATEGORIES).flat().map(x => x[0]));
+    const managedCategories = new Set(Object.keys(CATEGORIES));
+    const managed = managedChannels.has(thread.parent.name) ||
+      (thread.parent.parent && managedCategories.has(thread.parent.parent.name));
+    if (managed) await thread.delete('Goll: threads are disabled on managed channels').catch(()=>{});
+  } catch(e) { console.error('Thread guard:', e.message); }
+});
 
 client.on('error',e=>console.error('Discord client error:',e));
 process.on('unhandledRejection',e=>console.error('Unhandled promise rejection:',e));

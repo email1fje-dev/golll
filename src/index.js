@@ -450,8 +450,9 @@ async function setupGuild(guild, repair=false) {
       new ButtonBuilder().setCustomId('v2_ticket_open').setLabel('🎫 Open Ticket').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId('v2_apply').setLabel('📝 Staff Application').setStyle(ButtonStyle.Secondary)
     );
-    const exists=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
-    if(!exists) await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
+    const existingWelcome=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).find(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
+    if(existingWelcome) await existingWelcome.edit({components:[row]}).catch(()=>{});
+    else await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
   }
   await seedChannelContent(guild, repair);
   await sendActivityPanel(guild, repair);

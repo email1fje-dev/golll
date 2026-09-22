@@ -429,16 +429,48 @@ async function setupGuild(guild, repair=false) {
         await cat.permissionOverwrites.edit(r, { ViewChannel: canView }).catch(()=>{});
       }
 
+      const memberChatChannels = new Set(['💬・general','🖼️・media','😂・memes','🎮・gaming']);
+      const memberReadOnlyChannels = new Set([
+        '📜・rules','📢・announcements','👋・welcome','ℹ️・about-us','🔐・verify',
+        '📊・levels','🤝・partnerships','🎉・giveaways','💎・nitro-drops','🏆・winners'
+      ]);
+      const staffReadOnlyChannels = new Set(['📋・activity-check']);
+      const logCategory = catName === '🔐 STAFF LOGS';
+
       for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
-        await ch.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
-        if (memberRole) await ch.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
+        const isVoice = ch.type === ChannelType.GuildVoice || ch.type === ChannelType.GuildStageVoice;
+        await ch.permissionOverwrites.edit(everyone, {
+          ViewChannel: false,
+          ...(isVoice ? { Connect: false } : { SendMessages: false })
+        }).catch(()=>{});
+
+        if (memberRole && !staffOnly) {
+          const canMemberChat = memberChatChannels.has(ch.name) && !memberReadOnlyChannels.has(ch.name);
+          await ch.permissionOverwrites.edit(memberRole, {
+            ViewChannel: true,
+            ...(isVoice ? { Connect: true } : { SendMessages: canMemberChat, AddReactions: canMemberChat })
+          }).catch(()=>{});
+        }
+
         for (const roleName of staffRoleNames) {
           const r = guild.roles.cache.find(x => x.name === roleName);
           if (!r) continue;
+
           const canView = staffOnly
             ? (catName === '👮 STAFF' || ['👑 Owner','🛡️ Admin','🔨 Moderator'].includes(roleName))
             : true;
-          await ch.permissionOverwrites.edit(r, { ViewChannel: canView }).catch(()=>{});
+
+          let canSend = false;
+          if (logCategory) canSend = false;
+          else if (staffOnly) canSend = ['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'].includes(roleName);
+          else if (staffReadOnlyChannels.has(ch.name)) canSend = ['👑 Owner','🛡️ Admin'].includes(roleName);
+          else if (memberChatChannels.has(ch.name)) canSend = true;
+          else canSend = ['👑 Owner','🛡️ Admin','🔨 Moderator'].includes(roleName);
+
+          await ch.permissionOverwrites.edit(r, {
+            ViewChannel: canView,
+            ...(isVoice ? { Connect: canView } : { SendMessages: canSend })
+          }).catch(()=>{});
         }
       }
     }

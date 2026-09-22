@@ -731,9 +731,15 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
       try {
         // IMPORTANT: do not unlock until the Welcome audio has finished.
         const played = await playWelcomeTTS(newS.member);
-        if (played && memberRole && newS.member.voice?.channel?.id === newS.channelId && !newS.member.roles.cache.has(memberRole.id)) {
-          await newS.member.roles.add(memberRole, 'Goll Welcome voice onboarding complete');
+        if (played && memberRole && newS.member.voice?.channel?.id === newS.channelId) {
+          if (!newS.member.roles.cache.has(memberRole.id)) {
+            await newS.member.roles.add(memberRole, 'Goll Welcome voice onboarding complete');
+          }
           await unlockMember(newS.member);
+          // Welcome is temporary: remove it once onboarding is completed.
+          if (newS.channel && newS.channel.name === '👋・Welcome') {
+            await newS.channel.delete('Goll: Welcome onboarding completed').catch(()=>{});
+          }
         }
       } catch(e) {
         console.error('Welcome TTS:', e.message);

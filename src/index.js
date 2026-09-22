@@ -327,8 +327,8 @@ async function sendApplicationPanel(guild, force=false) {
   const ch=guild.channels.cache.find(c=>c.name==='📝・apply-for-staff'&&c.type===ChannelType.GuildText); if(!ch) return;
   const exists=(await ch.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='📝 Staff Applications');
   if(exists&&!force) return;
-  const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('goll_apply').setLabel('📝 Apply for Staff').setStyle(ButtonStyle.Primary));
-  await ch.send({embeds:[new EmbedBuilder().setTitle('📝 Staff Applications').setDescription('Want to join the staff team? Click the button below and complete the application.').setColor(0x5865F2)],components:[row]});
+  const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('v2_apply').setLabel('📝 Apply for Staff').setStyle(ButtonStyle.Primary));
+  await ch.send({embeds:[new EmbedBuilder().setTitle('📝 Staff Applications V2').setDescription('Want to join the staff team? Click the button below and complete the V2 application.').setColor(0x5865F2)],components:[row]});
 }
 
 async function sendActivityPanel(guild, force=false) {
@@ -1067,10 +1067,10 @@ client.on('interactionCreate',async i=>{
         p.push(i.user.id);await q('UPDATE giveaways SET participants=$1 WHERE message_id=$2',[JSON.stringify(p),i.message.id]);
         return i.reply({content:'🎉 You entered the giveaway!',ephemeral:true});
       }
-      if(i.customId==='goll_apply') return i.showModal(new ModalBuilder().setCustomId('apply_modal').setTitle('📝 Staff Application').addComponents(
+      if(i.customId==='goll_apply') return i.showModal(new ModalBuilder().setCustomId('v2_apply_modal').setTitle('📝 Staff Application').addComponents(
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('age').setLabel('Age').setStyle(TextInputStyle.Short).setRequired(true)),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('experience').setLabel('Why should we choose you?').setStyle(TextInputStyle.Paragraph).setRequired(true)),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('availability').setLabel('Availability').setStyle(TextInputStyle.Short).setRequired(true))
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('experience').setLabel('Experience / why staff?').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1500)),
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('availability').setLabel('Availability').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300))
       ));
     }
 

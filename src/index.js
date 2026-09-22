@@ -678,6 +678,7 @@ client.once('ready',async()=>{
   if(!pool) console.error('Goll: DATABASE_URL is missing. Persistent systems are disabled until PostgreSQL is configured.');
   else await q('SELECT 1');
   await dbInit();
+  await v2.dbInit(q);
   await registerCommands();
   for(const g of client.guilds.cache.values()){
     await initInvites(g);

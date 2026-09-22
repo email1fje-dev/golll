@@ -413,27 +413,32 @@ async function setupGuild(guild, repair=false) {
   const staffRoleNames = ['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'];
 
   for (const [catName] of Object.keys(CATEGORIES)) {
-    const cat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === catName);
-    if (!cat) continue;
     const staffOnly = catName === '👮 STAFF' || catName === '🔐 STAFF LOGS';
+    const cats = guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory && c.name === catName).values();
 
-    await cat.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
-    if (memberRole) await cat.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
+    for (const cat of cats) {
+      await cat.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
+      if (memberRole) await cat.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
 
-    if (staffOnly) {
       for (const roleName of staffRoleNames) {
         const r = guild.roles.cache.find(x => x.name === roleName);
-        if (r) await cat.permissionOverwrites.edit(r, { ViewChannel: roleName !== '🎫 Support' && roleName !== '📝 Trial Staff' || catName !== '🔐 STAFF LOGS' }).catch(()=>{});
+        if (!r) continue;
+        const canView = staffOnly
+          ? (catName === '👮 STAFF' || ['👑 Owner','🛡️ Admin','🔨 Moderator'].includes(roleName))
+          : true;
+        await cat.permissionOverwrites.edit(r, { ViewChannel: canView }).catch(()=>{});
       }
-    }
 
-    for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
-      await ch.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
-      if (memberRole) await ch.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
-      if (staffOnly) {
+      for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
+        await ch.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
+        if (memberRole) await ch.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
         for (const roleName of staffRoleNames) {
           const r = guild.roles.cache.find(x => x.name === roleName);
-          if (r) await ch.permissionOverwrites.edit(r, { ViewChannel: roleName !== '🎫 Support' && roleName !== '📝 Trial Staff' || catName !== '🔐 STAFF LOGS' }).catch(()=>{});
+          if (!r) continue;
+          const canView = staffOnly
+            ? (catName === '👮 STAFF' || ['👑 Owner','🛡️ Admin','🔨 Moderator'].includes(roleName))
+            : true;
+          await ch.permissionOverwrites.edit(r, { ViewChannel: canView }).catch(()=>{});
         }
       }
     }

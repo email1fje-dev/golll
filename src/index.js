@@ -351,10 +351,10 @@ async function sendGiveawayPanel(guild, force=false) {
 
 async function cleanupLegacyPanels(guild) {
   const targets = [
-    ['🎫・tickets',['🎫 Support Tickets','🎫 Support Tickets V2']],
-    ['📝・apply-for-staff',['📝 Staff Applications','📝 Staff Applications V2']],
-    ['🏖️・request-loa',['🏖️ LOA Manager V2']],
-    ['💼・staff-panel',['👮 Staff Control Panel','🎁 Giveaway Control','👮 Staff Management V2','🎁 Giveaway Manager V2']]
+    ['🎫・tickets',['🎫 Support Tickets']],
+    ['📝・apply-for-staff',['📝 Staff Applications']],
+    ['🏖️・request-loa',[]],
+    ['💼・staff-panel',['👮 Staff Control Panel','🎁 Giveaway Control']]
   ];
   for (const [channelName,titles] of targets) {
     const ch=guild.channels.cache.find(x=>x.name===channelName&&x.type===ChannelType.GuildText);

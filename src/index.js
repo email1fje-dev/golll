@@ -444,7 +444,8 @@ async function setupGuild(guild, repair=false) {
     await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});
     if (memberRole) await welcomeVoice.permissionOverwrites.edit(memberRole, { ViewChannel: true, Connect: true }).catch(()=>{});
   }
-  await cleanupLegacyPanels(guild);\n  const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
+  await cleanupLegacyPanels(guild);
+  const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
   if(welcome && welcome.isTextBased()){
     const row=new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('v2_ticket_open').setLabel('🎫 Open Ticket').setStyle(ButtonStyle.Primary),
@@ -709,7 +710,8 @@ client.on('interactionCreate',async i=>{
         setTimeout(()=>closeActivity(r.rows[0].id),minutes*60000);
         return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});
       }
-      if(cmd==='voice') {\n        const memberRole=i.guild.roles.cache.find(r=>r.name==='👤 Member');\n        if(!memberRole || !i.member.roles.cache.has(memberRole.id)) return i.reply({content:'🔒 Finish Welcome voice onboarding first.',ephemeral:true});\n        return createTempVoice(i);\n      }
+      if(cmd==='voice') {
+        const memberRole=i.guild.roles.cache.find(r=>r.name==='👤 Member');\n        if(!memberRole || !i.member.roles.cache.has(memberRole.id)) return i.reply({content:'🔒 Finish Welcome voice onboarding first.',ephemeral:true});\n        return createTempVoice(i);\n      }
       if(cmd==='active'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const old=(await q('SELECT active FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0]?.active ?? false;

@@ -349,6 +349,24 @@ async function sendGiveawayPanel(guild, force=false) {
   await ch.send({embeds:[new EmbedBuilder().setTitle('🎁 Giveaway Control').setDescription('Staff can create a giveaway from this panel. Members enter from the giveaway button.').setColor(0xF1C40F)],components:[row]});
 }
 
+async function cleanupLegacyPanels(guild) {
+  const targets = [
+    ['🎫・tickets',['🎫 Support Tickets','🎫 Support Tickets V2']],
+    ['📝・apply-for-staff',['📝 Staff Applications','📝 Staff Applications V2']],
+    ['🏖️・request-loa',['🏖️ LOA Manager V2']],
+    ['💼・staff-panel',['👮 Staff Control Panel','🎁 Giveaway Control','👮 Staff Management V2','🎁 Giveaway Manager V2']]
+  ];
+  for (const [channelName,titles] of targets) {
+    const ch=guild.channels.cache.find(x=>x.name===channelName&&x.type===ChannelType.GuildText);
+    if(!ch) continue;
+    const msgs=await ch.messages.fetch({limit:100}).catch(()=>new Map());
+    for(const m of msgs.values()){
+      if(m.author.id!==client.user.id) continue;
+      if(m.embeds.some(e=>titles.includes(e.title))) await m.delete().catch(()=>{});
+    }
+  }
+}
+
 async function setupGuild(guild, repair=false) {
   const roles={}; for(const [n] of MANAGED_ROLES) roles[n]=(await role(guild,n)).id;
 
@@ -426,21 +444,17 @@ async function setupGuild(guild, repair=false) {
     await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});
     if (memberRole) await welcomeVoice.permissionOverwrites.edit(memberRole, { ViewChannel: true, Connect: true }).catch(()=>{});
   }
-  const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
+  await cleanupLegacyPanels(guild);\n  const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
   if(welcome && welcome.isTextBased()){
     const row=new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('goll_ticket_menu').setLabel('🎫 Open Ticket').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('goll_apply').setLabel('📝 Staff Application').setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId('v2_ticket_open').setLabel('🎫 Open Ticket').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('v2_apply').setLabel('📝 Staff Application').setStyle(ButtonStyle.Secondary)
     );
     const exists=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).some(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
     if(!exists) await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
   }
   await seedChannelContent(guild, repair);
-  await sendTicketPanel(guild, repair);
-  await sendStaffPanel(guild, repair);
-  await sendApplicationPanel(guild, repair);
   await sendActivityPanel(guild, repair);
-  await sendGiveawayPanel(guild, repair);
   await nitro.ensurePanel(guild, repair);
   await verification.ensurePanel(guild);
   await automod.ensurePanel(guild, repair);
@@ -508,7 +522,7 @@ async function registerCommands(){
   await client.application.commands.set(commands.map(x=>x.toJSON()));
 }
 
-client.once('ready',async()=>{await dbInit();await registerCommands();for(const g of client.guilds.cache.values()){ await initInvites(g); try{ await setupGuild(g,false); }catch(e){ console.error('Panel/setup:',e.message); }} console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
+client.once('ready',async()=>{\n  if(!pool) console.error('Goll: DATABASE_URL is missing. Persistent systems are disabled until PostgreSQL is configured.');\n  else await q('SELECT 1');\n  await dbInit();await registerCommands();for(const g of client.guilds.cache.values()){ await initInvites(g); try{ await setupGuild(g,false); }catch(e){ console.error('Panel/setup:',e.message); }} console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
   await nitro.recover();
   const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;
   for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}
@@ -694,7 +708,7 @@ client.on('interactionCreate',async i=>{
         setTimeout(()=>closeActivity(r.rows[0].id),minutes*60000);
         return i.reply({content:`✅ Activity check started for ${minutes} minutes.`,ephemeral:true});
       }
-      if(cmd==='voice') return createTempVoice(i);
+      if(cmd==='voice') {\n        const memberRole=i.guild.roles.cache.find(r=>r.name==='👤 Member');\n        if(!memberRole || !i.member.roles.cache.has(memberRole.id)) return i.reply({content:'🔒 Finish Welcome voice onboarding first.',ephemeral:true});\n        return createTempVoice(i);\n      }
       if(cmd==='active'){
         if(!isStaff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
         const old=(await q('SELECT active FROM staff_status WHERE guild_id=$1 AND user_id=$2',[i.guild.id,i.user.id])).rows[0]?.active ?? false;
@@ -986,5 +1000,9 @@ async function finishGiveaway(messageId){
   if(msg) await msg.edit({components:[],embeds:[EmbedBuilder.from(msg.embeds[0]).setDescription(`**Prize:** ${r.prize}\\n**Winner:** ${winner?`<@${winner}>`:'No eligible entries.'}`).setColor(0x57F287)]}).catch(()=>{});
   if(channel) await channel.send(winner?`🎉 Congratulations <@${winner}>! You won **${r.prize}**!`:'⏰ Giveaway expired with no entries.');
 }
+
+client.on('error',e=>console.error('Discord client error:',e));
+process.on('unhandledRejection',e=>console.error('Unhandled promise rejection:',e));
+process.on('uncaughtException',e=>console.error('Uncaught exception:',e));
 
 client.login(DISCORD_TOKEN);

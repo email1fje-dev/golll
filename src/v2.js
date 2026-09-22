@@ -75,13 +75,14 @@ async function createTicket(i,q,type){
   if(open) return i.reply({content:'❌ You already have an open ticket: <#'+open.channel_id+'>',ephemeral:true});
   const support=i.guild.roles.cache.find(r=>r.name==='🎫 Support');
   const mod=i.guild.roles.cache.find(r=>r.name==='🔨 Moderator');
+  const staffRoles=i.guild.roles.cache.filter(r=>STAFF.includes(r.name));
   const cat=i.guild.channels.cache.find(c=>c.name==='🎫 SUPPORT'&&c.type===ChannelType.GuildCategory);
   const c=await i.guild.channels.create({name:('ticket-'+type.toLowerCase()+'-'+i.user.username).slice(0,95),type:ChannelType.GuildText,parent:cat?.id,
     permissionOverwrites:[
       {id:i.guild.id,deny:[PermissionsBitField.Flags.ViewChannel]},
       {id:i.user.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]},
       ...(support?[{id:support.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]}]:[]),
-      ...(mod?[{id:mod.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]}]:[])
+      ...(staffRoles.size?[...staffRoles.values()].map(r=>({id:r.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]})):[])
     ]});
   const sla=new Date(Date.now()+2*60*60*1000);
   await q('INSERT INTO ticket_v2(channel_id,guild_id,opener_id,type,sla_at) VALUES($1,$2,$3,$4,$5)',[c.id,i.guild.id,i.user.id,type,sla]);
@@ -144,8 +145,13 @@ async function setup(client,q){
         if(i.customId.startsWith('v2_ticket_create:')) return createTicket(i,q,i.customId.split(':')[1]);
         if(i.customId==='v2_ticket_claim'){
           if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
-          const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0]; if(!t) return i.reply({content:'❌ Not a V2 ticket.',ephemeral:true});
-          await q('UPDATE ticket_v2 SET claimed_by=$1 WHERE channel_id=$2',[i.user.id,i.channel.id]); await q('INSERT INTO staff_v2_profiles(guild_id,user_id,points) VALUES($1,$2,1) ON CONFLICT(guild_id,user_id) DO UPDATE SET points=staff_v2_profiles.points+1',[i.guild.id,i.user.id]); await logTicket(q,i.guild,i.channel.id,i.user.id,'CLAIMED'); return i.reply('🙋 Claimed by '+i.user+'.');
+          const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0];
+          if(!t) return i.reply({content:'❌ Not a V2 ticket.',ephemeral:true});
+          if(t.status==='CLOSED') return i.reply({content:'❌ This ticket is closed.',ephemeral:true});
+          await q('UPDATE ticket_v2 SET claimed_by=$1 WHERE channel_id=$2',[i.user.id,i.channel.id]);
+          await q('INSERT INTO staff_v2_profiles(guild_id,user_id,points) VALUES($1,$2,1) ON CONFLICT(guild_id,user_id) DO UPDATE SET points=staff_v2_profiles.points+1',[i.guild.id,i.user.id]);
+          await logTicket(q,i.guild,i.channel.id,i.user.id,'CLAIMED');
+          return i.reply({content:'🙋 **Claimed by '+i.user+'**',ephemeral:false});
         }
         if(i.customId==='v2_ticket_priority'){
           if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
@@ -160,7 +166,12 @@ async function setup(client,q){
           return i.reply({content:'Select a member:',components:[row(new UserSelectMenuBuilder().setCustomId(i.customId==='v2_ticket_add'?'v2_ticket_add_user':'v2_ticket_remove_user').setPlaceholder('Select member').setMinValues(1).setMaxValues(1))],ephemeral:true});
         }
         if(i.customId==='v2_ticket_transcript') { if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true}); return transcript(i); }
-        if(i.customId==='v2_ticket_close') { if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true}); return closeTicket(i,q); }
+        if(i.customId==='v2_ticket_close') {
+          const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0];
+          if(!t) return i.reply({content:'❌ Not a V2 ticket.',ephemeral:true});
+          if(!staff(i.member) && i.user.id!==t.opener_id) return i.reply({content:'❌ Only the ticket requester or staff can close this ticket.',ephemeral:true});
+          return closeTicket(i,q);
+        }
         if(i.customId==='v2_ticket_reopen'){
           if(!staff(i.member)) return i.reply({content:'❌ Staff only.',ephemeral:true});
           const t=(await q('SELECT * FROM ticket_v2 WHERE channel_id=$1',[i.channel.id])).rows[0]; if(!t||t.status!=='CLOSED') return i.reply({content:'❌ Ticket is not closed.',ephemeral:true});

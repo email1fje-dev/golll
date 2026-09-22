@@ -44,6 +44,10 @@ async function dbInit(q){
   await q(`CREATE TABLE IF NOT EXISTS owner_emergency(
     guild_id TEXT PRIMARY KEY,active BOOLEAN NOT NULL DEFAULT FALSE,changed_by TEXT,changed_at TIMESTAMPTZ
   )`);
+  await q(`CREATE TABLE IF NOT EXISTS owner_emergency_channels(
+    guild_id TEXT,channel_id TEXT,previous_state TEXT NOT NULL,
+    PRIMARY KEY(guild_id,channel_id)
+  )`);
 }
 
 function hub(){
@@ -153,13 +157,34 @@ async function setup(client,q){
         if(type==='stats'){ await ensureStats(i.guild); return i.reply({content:'📈 Stats channels updated.',ephemeral:true}); }
         if(type==='emergency') return i.reply({content:'🚨 Emergency Mode',components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('hub:lockdown').setLabel('🔒 Lockdown').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('hub:unlock').setLabel('🔓 Unlock').setStyle(ButtonStyle.Success))],ephemeral:true});
         if(type==='lockdown'){
-          const changed=[]; for(const ch of i.guild.channels.cache.values()){if(!ch.isTextBased()||ch.isThread()||ch.name===HUB_CHANNEL) continue; const ow=ch.permissionOverwrites.cache.get(i.guild.roles.everyone.id); if(ow?.deny.has(PermissionsBitField.Flags.SendMessages)) continue; await ch.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:false}).catch(()=>{}); changed.push(ch.id);}
-          await q('INSERT INTO owner_emergency(guild_id,active,changed_by,changed_at) VALUES($1,true,$2,NOW()) ON CONFLICT(guild_id) DO UPDATE SET active=true,changed_by=$2,changed_at=NOW()',[i.guild.id,i.user.id]); await q('INSERT INTO owner_audit(guild_id,actor_id,action,details) VALUES($1,$2,$3,$4)',[i.guild.id,i.user.id,'EMERGENCY_LOCKDOWN','channels='+changed.length]); return i.reply({content:'🔒 Emergency lockdown enabled for '+changed.length+' text channels.',ephemeral:true});
+          const current=(await q('SELECT active FROM owner_emergency WHERE guild_id=$1',[i.guild.id])).rows[0];
+          if(current?.active) return i.reply({content:'ℹ️ Emergency Mode is already active.',ephemeral:true});
+          const changed=[];
+          for(const ch of i.guild.channels.cache.values()){
+            if(!ch.isTextBased()||ch.isThread()||ch.name===HUB_CHANNEL) continue;
+            const ow=ch.permissionOverwrites.cache.get(i.guild.roles.everyone.id);
+            const previous=ow?.deny.has(PermissionsBitField.Flags.SendMessages)?'DENY':ow?.allow.has(PermissionsBitField.Flags.SendMessages)?'ALLOW':'NONE';
+            if(previous==='DENY') continue;
+            await ch.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:false}).catch(()=>{});
+            await q('INSERT INTO owner_emergency_channels(guild_id,channel_id,previous_state) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[i.guild.id,ch.id,previous]);
+            changed.push(ch.id);
+          }
+          await q('INSERT INTO owner_emergency(guild_id,active,changed_by,changed_at) VALUES($1,true,$2,NOW()) ON CONFLICT(guild_id) DO UPDATE SET active=true,changed_by=$2,changed_at=NOW()',[i.guild.id,i.user.id]);
+          await q('INSERT INTO owner_audit(guild_id,actor_id,action,details) VALUES($1,$2,$3,$4)',[i.guild.id,i.user.id,'EMERGENCY_LOCKDOWN','channels='+changed.length]);
+          return i.reply({content:'🔒 Emergency lockdown enabled for '+changed.length+' text channels.',ephemeral:true});
         }
         if(type==='unlock'){
           const active=(await q('SELECT active FROM owner_emergency WHERE guild_id=$1',[i.guild.id])).rows[0]; if(!active?.active) return i.reply({content:'ℹ️ Emergency Mode is not active.',ephemeral:true});
-          for(const ch of i.guild.channels.cache.values()){if(!ch.isTextBased()||ch.isThread()||ch.name===HUB_CHANNEL) continue; await ch.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:null}).catch(()=>{});}
-          await q('UPDATE owner_emergency SET active=false,changed_by=$2,changed_at=NOW() WHERE guild_id=$1',[i.guild.id,i.user.id]); return i.reply({content:'🔓 Emergency Mode disabled.',ephemeral:true});
+          const saved=(await q('SELECT channel_id,previous_state FROM owner_emergency_channels WHERE guild_id=$1',[i.guild.id])).rows;
+          for(const s of saved){
+            const ch=i.guild.channels.cache.get(s.channel_id); if(!ch) continue;
+            const value=s.previous_state==='ALLOW'?true:null;
+            await ch.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:value}).catch(()=>{});
+          }
+          await q('DELETE FROM owner_emergency_channels WHERE guild_id=$1',[i.guild.id]);
+          await q('UPDATE owner_emergency SET active=false,changed_by=$2,changed_at=NOW() WHERE guild_id=$1',[i.guild.id,i.user.id]);
+          await q('INSERT INTO owner_audit(guild_id,actor_id,action,details) VALUES($1,$2,$3,$4)',[i.guild.id,i.user.id,'EMERGENCY_UNLOCK','restored='+saved.length]);
+          return i.reply({content:'🔓 Emergency Mode disabled and previous channel permissions restored.',ephemeral:true});
         }
       }
       if(i.isModalSubmit()){

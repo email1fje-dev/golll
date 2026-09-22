@@ -476,6 +476,36 @@ async function setupGuild(guild, repair=false) {
     }
   }
 
+  // Hard-lock staff and log areas: regular members cannot view, send, react, create threads, or use forum/thread actions.
+  const protectedStaffCategories = new Set(['👮 STAFF','🔐 STAFF LOGS']);
+  for (const catName of protectedStaffCategories) {
+    const cats = guild.channels.cache.filter(ch => ch.type === ChannelType.GuildCategory && ch.name === catName);
+    for (const cat of cats.values()) {
+      if (memberRole) {
+        await cat.permissionOverwrites.edit(memberRole, {
+          ViewChannel: false, SendMessages: false, AddReactions: false,
+          CreatePublicThreads: false, CreatePrivateThreads: false,
+          SendMessagesInThreads: false, UseApplicationCommands: false
+        }).catch(()=>{});
+      }
+      for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
+        if (memberRole) {
+          await ch.permissionOverwrites.edit(memberRole, {
+            ViewChannel: false, SendMessages: false, AddReactions: false,
+            CreatePublicThreads: false, CreatePrivateThreads: false,
+            SendMessagesInThreads: false, ManageThreads: false,
+            UseApplicationCommands: false
+          }).catch(()=>{});
+        }
+        await ch.permissionOverwrites.edit(everyone, {
+          ViewChannel: false, SendMessages: false, AddReactions: false,
+          CreatePublicThreads: false, CreatePrivateThreads: false,
+          SendMessagesInThreads: false
+        }).catch(()=>{});
+      }
+    }
+  }
+
   const welcomeVoice = guild.channels.cache.find(c => c.name === '👋・Welcome' && c.type === ChannelType.GuildVoice);
   if (welcomeVoice) {
     await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});

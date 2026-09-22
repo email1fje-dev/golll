@@ -439,16 +439,33 @@ async function setupGuild(guild, repair=false) {
 
       for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
         const isVoice = ch.type === ChannelType.GuildVoice || ch.type === ChannelType.GuildStageVoice;
+        // Threads are disabled on every managed channel. This is independent
+        // from normal chat permissions so Community can stay fully usable.
         await ch.permissionOverwrites.edit(everyone, {
           ViewChannel: false,
-          ...(isVoice ? { Connect: false } : { SendMessages: false })
+          ...(isVoice
+            ? { Connect: false }
+            : {
+                SendMessages: false,
+                CreatePublicThreads: false,
+                CreatePrivateThreads: false,
+                SendMessagesInThreads: false
+              })
         }).catch(()=>{});
 
         if (memberRole && !staffOnly) {
           const canMemberChat = memberChatChannels.has(ch.name) && !memberReadOnlyChannels.has(ch.name);
           await ch.permissionOverwrites.edit(memberRole, {
             ViewChannel: true,
-            ...(isVoice ? { Connect: true } : { SendMessages: canMemberChat, AddReactions: canMemberChat })
+            ...(isVoice
+              ? { Connect: true }
+              : {
+                  SendMessages: canMemberChat,
+                  AddReactions: canMemberChat,
+                  CreatePublicThreads: false,
+                  CreatePrivateThreads: false,
+                  SendMessagesInThreads: false
+                })
           }).catch(()=>{});
         }
 
@@ -469,7 +486,14 @@ async function setupGuild(guild, repair=false) {
 
           await ch.permissionOverwrites.edit(r, {
             ViewChannel: canView,
-            ...(isVoice ? { Connect: canView } : { SendMessages: canSend })
+            ...(isVoice
+              ? { Connect: canView }
+              : {
+                  SendMessages: canSend,
+                  CreatePublicThreads: false,
+                  CreatePrivateThreads: false,
+                  SendMessagesInThreads: false
+                })
           }).catch(()=>{});
         }
       }
@@ -530,6 +554,20 @@ async function setupGuild(guild, repair=false) {
   if (welcomeVoice) {
     await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});
     if (memberRole) await welcomeVoice.permissionOverwrites.edit(memberRole, { ViewChannel: true, Connect: true }).catch(()=>{});
+  }
+  // Repair existing members created before the onboarding gate.
+  // New joins still receive no Member role until Welcome voice onboarding finishes.
+  if (repair || !guild.roles.cache.get(roles['👤 Member'])) {
+    const mr = guild.roles.cache.get(roles['👤 Member']);
+    if (mr) {
+      for (const m of guild.members.cache.values()) {
+        if (m.user.bot) continue;
+        if (m.roles.cache.has(mr.id)) continue;
+        if (m.roles.cache.some(r => STAFF_ROLES.has(r.name))) continue;
+        await m.roles.add(mr, 'Goll repair: restore Member access for existing member').catch(()=>{});
+        await unlockMember(m).catch(()=>{});
+      }
+    }
   }
   await cleanupLegacyPanels(guild);
   const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);

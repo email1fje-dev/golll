@@ -531,7 +531,6 @@ client.once('ready',async()=>{
   await registerCommands();
   for(const g of client.guilds.cache.values()){
     await initInvites(g);
-    try{ await setupGuild(g,false); }catch(e){ console.error('Panel/setup:',e.message); }
   }
   console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
   await nitro.recover();

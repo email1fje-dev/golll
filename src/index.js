@@ -555,18 +555,17 @@ async function setupGuild(guild, repair=false) {
     await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});
     if (memberRole) await welcomeVoice.permissionOverwrites.edit(memberRole, { ViewChannel: true, Connect: true }).catch(()=>{});
   }
-  // Repair existing members created before the onboarding gate.
-  // New joins still receive no Member role until Welcome voice onboarding finishes.
-  if (repair || !guild.roles.cache.get(roles['👤 Member'])) {
-    const mr = guild.roles.cache.get(roles['👤 Member']);
-    if (mr) {
-      for (const m of guild.members.cache.values()) {
-        if (m.user.bot) continue;
-        if (m.roles.cache.has(mr.id)) continue;
-        if (m.roles.cache.some(r => STAFF_ROLES.has(r.name))) continue;
-        await m.roles.add(mr, 'Goll repair: restore Member access for existing member').catch(()=>{});
-        await unlockMember(m).catch(()=>{});
+  // Existing members must have Member access. Only NEW joins are kept locked
+  // by guildMemberAdd until Welcome voice onboarding completes.
+  const mr = guild.roles.cache.get(roles['👤 Member']);
+  if (mr) {
+    for (const m of guild.members.cache.values()) {
+      if (m.user.bot) continue;
+      if (m.roles.cache.some(r => STAFF_ROLES.has(r.name))) continue;
+      if (!m.roles.cache.has(mr.id)) {
+        await m.roles.add(mr, 'Goll setup: restore Member access for existing member').catch(()=>{});
       }
+      await unlockMember(m).catch(()=>{});
     }
   }
   await cleanupLegacyPanels(guild);
@@ -730,6 +729,21 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
 });;
 
 const spamTracker=new Map();
+
+client.on('threadCreate',async thread=>{
+  try {
+    const parent=thread.parent;
+    if(!parent || !thread.guild) return;
+    const managedNames=new Set(Object.values(CATEGORIES).flat().map(x=>x[0]));
+    const managedCategories=new Set(Object.keys(CATEGORIES));
+    const managed = managedNames.has(parent.name) ||
+      (parent.parent && managedCategories.has(parent.parent.name));
+    if(!managed) return;
+    await thread.delete('Goll: threads are disabled').catch(()=>{});
+  } catch(e) {
+    console.error('Thread guard:',e.message);
+  }
+});
 
 client.on('messageCreate',async message=>{
   if(!message.guild||message.author.bot||!message.member) return;

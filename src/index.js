@@ -524,7 +524,16 @@ async function registerCommands(){
   await client.application.commands.set(commands.map(x=>x.toJSON()));
 }
 
-client.once('ready',async()=>{\n  if(!pool) console.error('Goll: DATABASE_URL is missing. Persistent systems are disabled until PostgreSQL is configured.');\n  else await q('SELECT 1');\n  await dbInit();await registerCommands();for(const g of client.guilds.cache.values()){ await initInvites(g); try{ await setupGuild(g,false); }catch(e){ console.error('Panel/setup:',e.message); }} console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
+client.once('ready',async()=>{
+  if(!pool) console.error('Goll: DATABASE_URL is missing. Persistent systems are disabled until PostgreSQL is configured.');
+  else await q('SELECT 1');
+  await dbInit();
+  await registerCommands();
+  for(const g of client.guilds.cache.values()){
+    await initInvites(g);
+    try{ await setupGuild(g,false); }catch(e){ console.error('Panel/setup:',e.message); }
+  }
+  console.log(`Goll online as ${client.user.tag} | TTS token: ${TTS_TOKEN?'configured':'not configured'}`);
   await nitro.recover();
   const open=(await q("SELECT message_id,ends_at FROM giveaways WHERE status='OPEN'",[])).rows;
   for(const g of open){const ms=Math.max(1000,new Date(g.ends_at).getTime()-Date.now());setTimeout(()=>finishGiveaway(g.message_id),ms);}

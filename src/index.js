@@ -476,32 +476,52 @@ async function setupGuild(guild, repair=false) {
     }
   }
 
-  // Hard-lock staff and log areas: regular members cannot view, send, react, create threads, or use forum/thread actions.
-  const protectedStaffCategories = new Set(['👮 STAFF','🔐 STAFF LOGS']);
-  for (const catName of protectedStaffCategories) {
+  // Staff areas: only the appropriate staff roles can see them.
+  // Staff logs are private to Owner/Admin/Moderator. Regular staff cannot see logs.
+  const staffRules = {
+    '👮 STAFF': { member:false, roles:['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'] },
+    '🔐 STAFF LOGS': { member:false, roles:['👑 Owner','🛡️ Admin','🔨 Moderator'] }
+  };
+  for (const [catName, rule] of Object.entries(staffRules)) {
     const cats = guild.channels.cache.filter(ch => ch.type === ChannelType.GuildCategory && ch.name === catName);
     for (const cat of cats.values()) {
-      if (memberRole) {
-        await cat.permissionOverwrites.edit(memberRole, {
-          ViewChannel: false, SendMessages: false, AddReactions: false,
-          CreatePublicThreads: false, CreatePrivateThreads: false,
-          SendMessagesInThreads: false, UseApplicationCommands: false
+      if (memberRole) await cat.permissionOverwrites.edit(memberRole, {
+        ViewChannel:false, SendMessages:false, AddReactions:false,
+        CreatePublicThreads:false, CreatePrivateThreads:false, SendMessagesInThreads:false
+      }).catch(()=>{});
+
+      for (const roleName of staffRoleNames) {
+        const rr=guild.roles.cache.find(x=>x.name===roleName);
+        if(!rr) continue;
+        const canView=rule.roles.includes(roleName);
+        await cat.permissionOverwrites.edit(rr,{
+          ViewChannel:canView,
+          SendMessages:canView && catName==='👮 STAFF',
+          CreatePublicThreads:false,
+          CreatePrivateThreads:false,
+          SendMessagesInThreads:false
         }).catch(()=>{});
       }
-      for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
-        if (memberRole) {
-          await ch.permissionOverwrites.edit(memberRole, {
-            ViewChannel: false, SendMessages: false, AddReactions: false,
-            CreatePublicThreads: false, CreatePrivateThreads: false,
-            SendMessagesInThreads: false, ManageThreads: false,
-            UseApplicationCommands: false
+
+      for (const ch of guild.channels.cache.filter(x=>x.parentId===cat.id).values()) {
+        if(memberRole) await ch.permissionOverwrites.edit(memberRole,{
+          ViewChannel:false, SendMessages:false, AddReactions:false,
+          CreatePublicThreads:false, CreatePrivateThreads:false, SendMessagesInThreads:false
+        }).catch(()=>{});
+
+        for (const roleName of staffRoleNames) {
+          const rr=guild.roles.cache.find(x=>x.name===roleName);
+          if(!rr) continue;
+          const canView=rule.roles.includes(roleName);
+          await ch.permissionOverwrites.edit(rr,{
+            ViewChannel:canView,
+            SendMessages:canView && catName==='👮 STAFF',
+            AddReactions:canView && catName==='👮 STAFF',
+            CreatePublicThreads:false,
+            CreatePrivateThreads:false,
+            SendMessagesInThreads:false
           }).catch(()=>{});
         }
-        await ch.permissionOverwrites.edit(everyone, {
-          ViewChannel: false, SendMessages: false, AddReactions: false,
-          CreatePublicThreads: false, CreatePrivateThreads: false,
-          SendMessagesInThreads: false
-        }).catch(()=>{});
       }
     }
   }

@@ -74,7 +74,7 @@ async function welcomeTTS(member) {
       },
       body: JSON.stringify({
         text:
-          'Welcome to Goll! We are happy to have you here, ' +
+          ''Welcome! We are happy to have you here, ' +
           member.displayName +
           '! Please enjoy your time here.',
         model_id: 'eleven_multilingual_v2'
@@ -140,7 +140,7 @@ async function getOrCreateMemberRole(guild) {
   if (!role) {
     role = await guild.roles.create({
       name: MEMBER_ROLE,
-      reason: 'Goll Welcome onboarding'
+      reason: 'Welcome onboarding'
     });
   }
 
@@ -188,7 +188,7 @@ async function setupGuild(guild) {
       channel.type === ChannelType.GuildCategory &&
       LEGACY_CATEGORY_NAMES.has(channel.name)
     ) {
-      await channel.delete('Goll Welcome-only cleanup').catch(() => {});
+      await channel.delete('Welcome-only cleanup').catch(() => {});
     }
   }
 
@@ -198,7 +198,7 @@ async function setupGuild(guild) {
       LEGACY_CHANNEL_NAMES.has(channel.name) &&
       !(channel.name === WELCOME_NAME && channel.type === ChannelType.GuildVoice)
     ) {
-      await channel.delete('Goll Welcome-only cleanup').catch(() => {});
+      await channel.delete('Welcome-only cleanup').catch(() => {});
     }
   }
 
@@ -210,7 +210,7 @@ async function setupGuild(guild) {
     welcome = await guild.channels.create({
       name: WELCOME_NAME,
       type: ChannelType.GuildVoice,
-      reason: 'Goll Welcome onboarding'
+      reason: 'Welcome onboarding'
     });
   }
 
@@ -233,7 +233,7 @@ async function setupGuild(guild) {
   // Remove every old managed role except the one role required by onboarding.
   for (const role of [...guild.roles.cache.values()]) {
     if (role.managed || !LEGACY_ROLE_NAMES.has(role.name)) continue;
-    await role.delete('Goll Welcome-only cleanup').catch(() => {});
+    await role.delete('Welcome-only cleanup').catch(() => {});
   }
 
   // Existing members keep access. New members are gated by guildMemberAdd.
@@ -246,7 +246,7 @@ async function setupGuild(guild) {
   }
 
   console.log(
-    '[Goll] Ready: ' +
+    '[Welcome] Ready: ' +
       guild.name +
       ' -> only ' +
       WELCOME_NAME +
@@ -256,18 +256,18 @@ async function setupGuild(guild) {
 }
 
 client.once('ready', async () => {
-  console.log('Goll logged in as ' + client.user.tag);
+  console.log('Bot logged in as ' + client.user.tag);
 
   for (const guild of client.guilds.cache.values()) {
     await setupGuild(guild).catch(error =>
-      console.error('[Goll] Setup error:', error)
+      console.error('[Welcome] Setup error:', error)
     );
   }
 });
 
 client.on('guildCreate', guild => {
   setupGuild(guild).catch(error =>
-    console.error('[Goll] Guild setup error:', error)
+    console.error('[Welcome] Guild setup error:', error)
   );
 });
 
@@ -278,12 +278,12 @@ client.on('guildMemberAdd', async member => {
     const role = await getOrCreateMemberRole(member.guild);
 
     if (member.roles.cache.has(role.id)) {
-      await member.roles.remove(role, 'Goll onboarding gate').catch(() => {});
+      await member.roles.remove(role, 'Welcome onboarding gate').catch(() => {});
     }
 
     await lockNewMember(member);
   } catch (error) {
-    console.error('[Goll] Member lock error:', error);
+    console.error('[Welcome] Member lock error:', error);
   }
 });
 
@@ -306,19 +306,19 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     await welcomeTTS(member);
 
     const role = await getOrCreateMemberRole(member.guild);
-    await member.roles.add(role, 'Goll Welcome onboarding');
+    await member.roles.add(role, 'Welcome onboarding');
     await unlockMember(member);
 
-    console.log('[Goll] Onboarded ' + member.user.tag);
+    console.log('[Welcome] Onboarded ' + member.user.tag);
   } catch (error) {
     welcomeSeen.delete(key);
-    console.error('[Goll] Welcome onboarding error:', error);
+    console.error('[Welcome] Welcome onboarding error:', error);
   }
 });
 
-client.on('error', error => console.error('[Goll] Discord error:', error));
+client.on('error', error => console.error('[Welcome] Discord error:', error));
 process.on('unhandledRejection', error =>
-  console.error('[Goll] Unhandled rejection:', error)
+  console.error('[Welcome] Unhandled rejection:', error)
 );
 
 client.login(TOKEN);

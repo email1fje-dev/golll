@@ -4,7 +4,7 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
-    "start": "node -r ./src/stability-loader.js -r ./src/voice-loader.js -r ./src/logging-loader.js src/index.js"
+    "start": "node src/index.js"
   },
   "engines": {
     "node": ">=20"
@@ -12,7 +12,6 @@
   "dependencies": {
     "discord.js": "^14.22.1",
     "@discordjs/voice": "^0.19.0",
-    "pg": "^8.16.3",
     "ffmpeg-static": "^5.2.0"
   }
 }

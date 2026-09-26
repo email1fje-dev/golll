@@ -368,265 +368,67 @@ async function cleanupLegacyPanels(guild) {
 }
 
 async function setupGuild(guild, repair=false) {
-  const roles={}; for(const [n] of MANAGED_ROLES) roles[n]=(await role(guild,n)).id;
+  // Goll is now a Welcome-only bot.
+  // It creates exactly one managed channel: 👋・Welcome.
+  // All previous Goll-managed categories/channels are removed.
+  const managedChannelNames = new Set(Object.values(CATEGORIES).flat().map(x => x[0]));
+  const managedCategoryNames = new Set(Object.keys(CATEGORIES));
 
-  // Goll owns these resources. If an earlier setup/redeploy created duplicates,
-  // clean duplicates by managed name globally, then keep one canonical resource.
-  for (const [catName, items] of Object.entries(CATEGORIES)) {
-    const wantedCategory = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === catName);
-    if (wantedCategory) {
-      for (const [name,type] of items) {
-        const matches = guild.channels.cache.filter(c => c.name === name && c.type === type);
-        if (matches.size > 1) {
-          const inWanted = [...matches.values()].find(c => c.parentId === wantedCategory.id);
-          const keep = inWanted || [...matches.values()].sort((a,b)=>a.id.localeCompare(b.id))[0];
-          for (const dup of matches.values()) if (dup.id !== keep.id) await dup.delete('Goll setup: remove duplicate managed channel').catch(()=>{});
-        }
-      }
+  for (const ch of [...guild.channels.cache.values()]) {
+    if (ch.type === ChannelType.GuildCategory && managedCategoryNames.has(ch.name)) {
+      await ch.delete('Goll Welcome-only mode: remove old managed category').catch(()=>{});
+      continue;
     }
-    const cats = guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory && c.name === catName);
-    if (cats.size > 1) {
-      const keep = [...cats.values()].sort((a,b) => b.children.cache.size - a.children.cache.size || a.id.localeCompare(b.id))[0];
-      for (const dup of cats.values()) {
-        if (dup.id !== keep.id) await dup.delete('Goll setup: remove duplicate category').catch(()=>{});
-      }
-    }
-    const cat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === catName);
-    if (!cat) continue;
-    for (const [name,type] of items) {
-      const matches = guild.channels.cache.filter(c => c.parentId === cat.id && c.name === name && c.type === type);
-      if (matches.size > 1) {
-        const keep = [...matches.values()].sort((a,b)=>a.id.localeCompare(b.id))[0];
-        for (const dup of matches.values()) if (dup.id !== keep.id) await dup.delete('Goll setup: remove duplicate channel').catch(()=>{});
-      }
+    if (managedChannelNames.has(ch.name) && ch.name !== '👋・Welcome') {
+      await ch.delete('Goll Welcome-only mode: remove old managed channel').catch(()=>{});
     }
   }
 
-  const channels={};
-  for(const [catName,items] of Object.entries(CATEGORIES)){
-    const cat=await category(guild,catName); channels[catName]={};
-    for(const [n,t] of items) channels[catName][n]=(await chan(guild,cat,n,t)).id;
+  let welcome = guild.channels.cache.find(c =>
+    c.type === ChannelType.GuildVoice && c.name === '👋・Welcome'
+  );
+  if (!welcome) {
+    welcome = await guild.channels.create({
+      name: '👋・Welcome',
+      type: ChannelType.GuildVoice,
+      reason: 'Goll Welcome-only system'
+    });
   }
-  // New members are locked down until Welcome voice onboarding is complete.
-  const everyone = guild.roles.everyone;
-  const memberRole = guild.roles.cache.get(roles['👤 Member']);
-  const staffRoleNames = ['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'];
 
-  for (const [catName] of Object.keys(CATEGORIES)) {
-    const staffOnly = catName === '👮 STAFF' || catName === '🔐 STAFF LOGS';
-    const cats = guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory && c.name === catName).values();
+  const memberRole = guild.roles.cache.find(r => r.name === '👤 Member');
+  if (memberRole) {
+    await welcome.permissionOverwrites.edit(guild.roles.everyone, {
+      ViewChannel: true,
+      Connect: true
+    }).catch(()=>{});
+    await welcome.permissionOverwrites.edit(memberRole, {
+      ViewChannel: true,
+      Connect: true
+    }).catch(()=>{});
+  } else {
+    await welcome.permissionOverwrites.edit(guild.roles.everyone, {
+      ViewChannel: true,
+      Connect: true
+    }).catch(()=>{});
+  }
 
-    for (const cat of cats) {
-      await cat.permissionOverwrites.edit(everyone, { ViewChannel: false }).catch(()=>{});
-      if (memberRole) await cat.permissionOverwrites.edit(memberRole, { ViewChannel: !staffOnly }).catch(()=>{});
-
-      for (const roleName of staffRoleNames) {
-        const r = guild.roles.cache.find(x => x.name === roleName);
-        if (!r) continue;
-        const canView = staffOnly
-          ? (catName === '👮 STAFF' || ['👑 Owner','🛡️ Admin','🔨 Moderator'].includes(roleName))
-          : true;
-        await cat.permissionOverwrites.edit(r, { ViewChannel: canView }).catch(()=>{});
-      }
-
-      const memberChatChannels = new Set(['💬・general','🖼️・media','😂・memes','🎮・gaming']);
-      const memberReadOnlyChannels = new Set([
-        '📜・rules','📢・announcements','👋・welcome','ℹ️・about-us','🔐・verify',
-        '📊・levels','🤝・partnerships','🎉・giveaways','💎・nitro-drops','🏆・winners'
-      ]);
-      const staffReadOnlyChannels = new Set(['📋・activity-check']);
-      const logCategory = catName === '🔐 STAFF LOGS';
-
-      for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
-        const isVoice = ch.type === ChannelType.GuildVoice || ch.type === ChannelType.GuildStageVoice;
-        // Threads are disabled on every managed channel. This is independent
-        // from normal chat permissions so Community can stay fully usable.
-        await ch.permissionOverwrites.edit(everyone, {
-          ViewChannel: false,
-          ...(isVoice
-            ? { Connect: false }
-            : {
-                SendMessages: false,
-                CreatePublicThreads: false,
-                CreatePrivateThreads: false,
-                SendMessagesInThreads: false
-              })
-        }).catch(()=>{});
-
-        if (memberRole && !staffOnly) {
-          const canMemberChat = memberChatChannels.has(ch.name) && !memberReadOnlyChannels.has(ch.name);
-          await ch.permissionOverwrites.edit(memberRole, {
-            ViewChannel: true,
-            ...(isVoice
-              ? { Connect: true }
-              : {
-                  SendMessages: canMemberChat,
-                  AddReactions: canMemberChat,
-                  CreatePublicThreads: false,
-                  CreatePrivateThreads: false,
-                  SendMessagesInThreads: false
-                })
-          }).catch(()=>{});
-        }
-
-        for (const roleName of staffRoleNames) {
-          const r = guild.roles.cache.find(x => x.name === roleName);
-          if (!r) continue;
-
-          const canView = staffOnly
-            ? (catName === '👮 STAFF' || ['👑 Owner','🛡️ Admin','🔨 Moderator'].includes(roleName))
-            : true;
-
-          let canSend = false;
-          if (logCategory) canSend = false;
-          else if (staffOnly) canSend = ['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'].includes(roleName);
-          else if (staffReadOnlyChannels.has(ch.name)) canSend = ['👑 Owner','🛡️ Admin'].includes(roleName);
-          else if (memberChatChannels.has(ch.name)) canSend = true;
-          else canSend = ['👑 Owner','🛡️ Admin','🔨 Moderator'].includes(roleName);
-
-          await ch.permissionOverwrites.edit(r, {
-            ViewChannel: canView,
-            ...(isVoice
-              ? { Connect: canView }
-              : {
-                  SendMessages: canSend,
-                  CreatePublicThreads: false,
-                  CreatePrivateThreads: false,
-                  SendMessagesInThreads: false
-                })
-          }).catch(()=>{});
-        }
-      }
+  // Keep every existing non-staff member unlocked. New joins are locked by
+  // guildMemberAdd until they complete Welcome voice onboarding.
+  for (const m of guild.members.cache.values()) {
+    if (m.user.bot) continue;
+    if (m.roles.cache.some(r => STAFF_ROLES.has(r.name))) continue;
+    if (memberRole && !m.roles.cache.has(memberRole.id)) {
+      await m.roles.add(memberRole, 'Goll Welcome-only setup').catch(()=>{});
     }
+    await unlockMember(m).catch(()=>{});
   }
 
-  // Staff areas: only the appropriate staff roles can see them.
-  // Staff logs are private to Owner/Admin/Moderator. Regular staff cannot see logs.
-  const staffRules = {
-    '👮 STAFF': { member:false, roles:['👑 Owner','🛡️ Admin','🔨 Moderator','🎫 Support','📝 Trial Staff'] },
-    '🔐 STAFF LOGS': { member:false, roles:['👑 Owner','🛡️ Admin','🔨 Moderator'] }
+  return {
+    roles: memberRole ? {'👤 Member': memberRole.id} : {},
+    channels: {'👋・Welcome': welcome.id},
+    mode: 'welcome-only'
   };
-  for (const [catName, rule] of Object.entries(staffRules)) {
-    const cats = guild.channels.cache.filter(ch => ch.type === ChannelType.GuildCategory && ch.name === catName);
-    for (const cat of cats.values()) {
-      if (memberRole) await cat.permissionOverwrites.edit(memberRole, {
-        ViewChannel:false, SendMessages:false, AddReactions:false,
-        CreatePublicThreads:false, CreatePrivateThreads:false, SendMessagesInThreads:false
-      }).catch(()=>{});
-
-      for (const roleName of staffRoleNames) {
-        const rr=guild.roles.cache.find(x=>x.name===roleName);
-        if(!rr) continue;
-        const canView=rule.roles.includes(roleName);
-        await cat.permissionOverwrites.edit(rr,{
-          ViewChannel:canView,
-          SendMessages:canView && catName==='👮 STAFF',
-          CreatePublicThreads:false,
-          CreatePrivateThreads:false,
-          SendMessagesInThreads:false
-        }).catch(()=>{});
-      }
-
-      for (const ch of guild.channels.cache.filter(x=>x.parentId===cat.id).values()) {
-        if(memberRole) await ch.permissionOverwrites.edit(memberRole,{
-          ViewChannel:false, SendMessages:false, AddReactions:false,
-          CreatePublicThreads:false, CreatePrivateThreads:false, SendMessagesInThreads:false
-        }).catch(()=>{});
-
-        for (const roleName of staffRoleNames) {
-          const rr=guild.roles.cache.find(x=>x.name===roleName);
-          if(!rr) continue;
-          const canView=rule.roles.includes(roleName);
-          await ch.permissionOverwrites.edit(rr,{
-            ViewChannel:canView,
-            SendMessages:canView && catName==='👮 STAFF',
-            AddReactions:canView && catName==='👮 STAFF',
-            CreatePublicThreads:false,
-            CreatePrivateThreads:false,
-            SendMessagesInThreads:false
-          }).catch(()=>{});
-        }
-      }
-    }
-  }
-
-  const welcomeVoice = guild.channels.cache.find(c => c.name === '👋・Welcome' && c.type === ChannelType.GuildVoice);
-  if (welcomeVoice) {
-    await welcomeVoice.permissionOverwrites.edit(everyone, { ViewChannel: true, Connect: true }).catch(()=>{});
-    if (memberRole) await welcomeVoice.permissionOverwrites.edit(memberRole, { ViewChannel: true, Connect: true }).catch(()=>{});
-  }
-  // Existing members must have Member access. Only NEW joins are kept locked
-  // by guildMemberAdd until Welcome voice onboarding completes.
-  const mr = guild.roles.cache.get(roles['👤 Member']);
-  if (mr) {
-    for (const m of guild.members.cache.values()) {
-      if (m.user.bot) continue;
-      if (m.roles.cache.some(r => STAFF_ROLES.has(r.name))) continue;
-      if (!m.roles.cache.has(mr.id)) {
-        await m.roles.add(mr, 'Goll setup: restore Member access for existing member').catch(()=>{});
-      }
-      await unlockMember(m).catch(()=>{});
-    }
-  }
-  // Final permission sync: explicitly restore Member access on public categories/channels.
-  // This also clears stale per-user onboarding denies from previous broken setups.
-  if (mr) {
-    for (const m of guild.members.cache.values()) {
-      if (m.user.bot || m.roles.cache.some(r => STAFF_ROLES.has(r.name))) continue;
-      if (!m.roles.cache.has(mr.id)) await m.roles.add(mr, 'Goll: restore Member role').catch(()=>{});
-      await unlockMember(m).catch(()=>{});
-    }
-  }
-  const publicCategories = new Set(['📌 INFORMATION','💬 COMMUNITY','🎫 SUPPORT','🎁 GIVEAWAYS','🔊 VOICE']);
-  for (const cat of guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory && publicCategories.has(c.name)).values()) {
-    if (mr) await cat.permissionOverwrites.edit(mr, { ViewChannel:true }).catch(()=>{});
-    for (const ch of guild.channels.cache.filter(x => x.parentId === cat.id).values()) {
-      const isVoice = ch.type === ChannelType.GuildVoice || ch.type === ChannelType.GuildStageVoice;
-      if (mr) await ch.permissionOverwrites.edit(mr, isVoice
-        ? { ViewChannel:true, Connect:true }
-        : {
-            ViewChannel:true,
-            SendMessages: ['💬・general','🖼️・media','😂・memes','🎮・gaming'].includes(ch.name),
-            AddReactions: ['💬・general','🖼️・media','😂・memes','🎮・gaming'].includes(ch.name),
-            CreatePublicThreads:false,
-            CreatePrivateThreads:false,
-            SendMessagesInThreads:false
-          }).catch(()=>{});
-    }
-  }
-  await cleanupLegacyPanels(guild);
-  const welcome=guild.channels.cache.get(channels['📌 INFORMATION']?.['👋・welcome']);
-  if(welcome && welcome.isTextBased()){
-    const row=new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('v2_ticket_open').setLabel('🎫 Open Ticket').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('v2_apply').setLabel('📝 Staff Application').setStyle(ButtonStyle.Secondary)
-    );
-    const existingWelcome=(await welcome.messages.fetch({limit:20}).catch(()=>new Map())).find(m=>m.author.id===client.user.id&&m.embeds[0]?.title==='👋 Welcome to Goll');
-    if(existingWelcome) await existingWelcome.edit({components:[row]}).catch(()=>{});
-    else await welcome.send({embeds:[new EmbedBuilder().setTitle('👋 Welcome to Goll').setDescription('Read the rules, meet the community, or open a ticket when you need help.').setColor(0x5865F2)],components:[row]});
-  }
-  await seedChannelContent(guild, repair);
-  await sendActivityPanel(guild, repair);
-  await nitro.ensurePanel(guild, repair);
-  await verification.ensurePanel(guild);
-  await automod.ensurePanel(guild, repair);
-  await dashboard.ensurePanel(guild, repair);
-  await discordOwner.ensurePanel(guild, q, repair);
-  await ownerHub.ensureHub(guild, q, repair);
-  await v2.ensurePanel(guild, q, repair);
-  await saveConfig(guild.id,{roles,channels,repair,updatedAt:new Date().toISOString()});
-  return {roles,channels};
 }
-
-client.goll = { setupGuild, query: q };
-discordOwner.setup(client, q);
-ownerHub.setup(client, q);
-v2.setup(client, q);
-
-function isStaff(member){ return member.roles.cache.some(r=>STAFF_ROLES.has(r.name)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild); }
-function isAdmin(member){ return member.permissions.has(PermissionsBitField.Flags.ManageGuild) || member.roles.cache.some(r=>['👑 Owner','🛡️ Admin'].includes(r.name)); }
-function isOwner(member){ return member?.guild?.ownerId===member.id; }
-
 async function openTicket(interaction,type='General Support'){
   const existing=(await q('SELECT channel_id FROM tickets WHERE guild_id=$1 AND opener_id=$2 AND closed=false',[interaction.guild.id,interaction.user.id])).rows[0];
   if(existing){const c=interaction.guild.channels.cache.get(existing.channel_id); return interaction.reply({content:`🎫 You already have ${c||'an open ticket'}.`,ephemeral:true});}
@@ -737,10 +539,7 @@ client.on('voiceStateUpdate',async(oldS,newS)=>{
             await newS.member.roles.add(memberRole, 'Goll Welcome voice onboarding complete');
           }
           await unlockMember(newS.member);
-          // Welcome is temporary: remove it once onboarding is completed.
-          if (newS.channel && newS.channel.name === '👋・Welcome') {
-            await newS.channel.delete('Goll: Welcome onboarding completed').catch(()=>{});
-          }
+          // Welcome is permanent in Welcome-only mode.
         }
       } catch(e) {
         console.error('Welcome TTS:', e.message);
